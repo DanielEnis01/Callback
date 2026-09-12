@@ -1,6 +1,5 @@
 import { Router, json, raw } from "express";
 import * as backboard from "../services/backboard.js";
-import { synthesizeSpeech } from "../services/elevenlabs.js";
 import { BackboardError } from "../integrations/backboard/backboardClient.js";
 
 // Export a factory so the HTTP contract can be verified without paid API calls.
@@ -57,13 +56,6 @@ export function createBackboardRouter(service = backboard) {
       targetRoles: req.body?.targetRoles,
       jobPosting: req.body?.jobPosting,
     }));
-  }));
-
-  router.post("/assistants/:assistantId/sessions/tts", handle(async (req, res) => {
-    const { text, voiceId } = req.body ?? {};
-    const audio = await synthesizeSpeech({ text, voiceId });
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.send(audio);
   }));
 
   router.post("/assistants/:assistantId/memories/search", handle(async (req, res) => {

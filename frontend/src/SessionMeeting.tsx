@@ -1,10 +1,8 @@
-import { useEffect, useState, FC, useRef } from "react";
+import { useEffect, useState, FC } from "react";
 import { Video, VideoOff, PhoneOff, ChevronDown, ChevronUp, Activity } from "lucide-react";
 import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
-
-const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 
 interface SessionMeetingProps {
   assistantId?: string;
@@ -17,7 +15,6 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
   const [elapsed, setElapsed] = useState(0);
   const [aiSpeaking, setAiSpeaking] = useState(true);
   const [minimized, setMinimized] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Real perception signal from the Presage SmartSpectra SDK — it owns
   // camera acquisition itself (see the `stream` handed to CameraFeed
@@ -35,37 +32,6 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
     const t = setInterval(() => setAiSpeaking((s) => !s), 3200);
     return () => clearInterval(t);
   }, []);
-
-  useEffect(() => {
-    if (!assistantId || !openingQuestion.trim()) return;
-
-    let cancelled = false;
-    const speak = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/api/backboard/assistants/${encodeURIComponent(assistantId)}/sessions/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: openingQuestion }),
-        });
-        if (!response.ok) throw new Error("Unable to generate interview audio.");
-        const blob = await response.blob();
-        if (cancelled) return;
-
-        const url = URL.createObjectURL(blob);
-        const nextAudio = new Audio(url);
-        audioRef.current?.pause();
-        audioRef.current = nextAudio;
-        nextAudio.play().catch(() => {
-          console.warn("Interview audio autoplay was blocked by the browser.");
-        });
-      } catch (err) {
-        console.error("TTS failed:", err);
-      }
-    };
-
-    void speak();
-    return () => { cancelled = true; audioRef.current?.pause(); };
-  }, [assistantId, openingQuestion]);
 
   useEffect(() => {
     if (error) console.error("Presage session error:", error);
