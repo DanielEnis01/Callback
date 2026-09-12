@@ -1,4 +1,17 @@
+# Dependencies and generated output
 node_modules/
-.env
+dist/
+dist-electron/
+release/
+.cache/
+.vite/
+
+# Local secrets. Keep the safe templates versioned.
+.env*
+!.env.example
+
+# Local/editor files
 *.log
+*.tsbuildinfo
 .DS_Store
+.backboard-real-api-lock.json

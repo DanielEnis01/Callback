@@ -4,9 +4,15 @@
   "private": true,
   "type": "module",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test",
+    "backboard:smoke": "node scripts/smokeTest.js",
+    "backboard:example": "node scripts/backboardExample.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

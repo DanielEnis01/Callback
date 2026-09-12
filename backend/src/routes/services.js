@@ -7,7 +7,12 @@ const router = Router();
 const SERVICES = ["gemini", "elevenlabs", "presage", "tigerdata", "backboard"];
 
 router.get("/", (_req, res) => {
-  res.json({ services: SERVICES.map((name) => ({ name, status: "not_implemented" })) });
+  res.json({ services: SERVICES.map((name) => ({
+    name,
+    status: name === "backboard"
+      ? process.env.BACKBOARD_API_KEY?.trim() ? "configured" : "not_configured"
+      : "not_implemented",
+  })) });
 });
 
 export default router;

@@ -63,8 +63,9 @@ Callback/
   python/       # placeholder — Perception (MediaPipe) + Speech (ASR) agents (not built yet)
 ```
 
-Each file in `backend/src/services/` is a skeleton with stubbed, throwing
-functions to be filled in as each integration gets wired up.
+Backboard is implemented in `backend/src/services/backboard.js` and exposed at
+`/api/backboard`. See [Backboard setup and lifecycle](backend/docs/backboard.md).
+The other service modules remain skeletons with stubbed, throwing functions.
 
 ---
 
@@ -90,7 +91,12 @@ Both live in the same architecture but do different jobs, and neither replaces t
 - **Tiger Data (Postgres/Timescale):** structured, numeric, time-ordered data — filler-word rate per session, gaze-away seconds, engagement/stress trend, Pomodoro session logs. Hypertables + continuous aggregates power the dashboard's trend charts.
 - **Backboard:** long-term conversational memory and retrieval — past transcripts, coaching notes, "what went wrong last time on this type of question." Handles embeddings and persistence across sessions without a custom vector pipeline.
 
-When the Coach Agent generates feedback, it pulls both: a SQL trend query from Tiger Data ("what's the pattern") and a Backboard retrieval call ("what specifically happened last time"), then hands both to Gemini as context.
+After a session ends, Backboard receives the completed transcript and summary for
+automatic memory extraction, independently of numeric storage. At the start of
+the next session, the backend supplies a plain-text trend sentence to Backboard,
+which combines it with retrieved memories and job-posting context for Gemini.
+The Backboard integration accepts that sentence from its caller; SQL and live
+signal capture are outside its scope.
 
 ---
 
