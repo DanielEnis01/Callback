@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, FC } from "react";
-import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, UploadCloud } from "lucide-react";
+import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, UploadCloud, Eye } from "lucide-react";
 import { CameraFeed } from "./CameraFeed";
 import { useCalibrationSession, type CalibrationSample } from "./useCalibrationSession";
 import { remoteStorageEnabled, saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
 import { uploadResume } from "./dataApi";
 import { fetchReadingText, fallbackQuotes } from "./readingText";
+import { useMediaPipe, buildMediaPipeBaseline } from "./useMediaPipe";
 
 interface CalibrationSessionProps {
   onDone: () => void;
@@ -65,6 +66,7 @@ function buildBaseline(samples: CalibrationSample[], recordedMs: number): Baseli
     stressLabel: avgBaevsky != null ? stressLabelFor(avgBaevsky) : null,
     edaMicroSiemens: mean(eda),
     microMotion: { seat: mean(seat), knees: mean(knees) },
+    mediaPipe: null, // filled in by CalibrationSession after buildMediaPipeBaseline
   };
 }
 
@@ -75,7 +77,6 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   const [brightness, setBrightness] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [targetRoles, setTargetRoles] = useState("");
-  const [jobPosting, setJobPosting] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -85,6 +86,8 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [draggingResume, setDraggingResume] = useState(false);
   const [readingInstructionsOpen, setReadingInstructionsOpen] = useState(false);
+  const [gazeCalibrationOpen, setGazeCalibrationOpen] = useState(false);
+  const [gazeCalibrationDone, setGazeCalibrationDone] = useState(false);
   const resumeInputRef = useRef<HTMLInputElement>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -127,9 +130,14 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   const cameraActive = phase === "checking" || phase === "recording";
   // Do not collect baseline samples or advance the clock while the reading
-  // instructions are in front of the passage.
-  const recording = phase === "recording" && !readingInstructionsOpen;
+  // instructions or gaze calibration are in front of the passage.
+  const recording = phase === "recording" && !readingInstructionsOpen && !gazeCalibrationOpen;
   const { stream, status, error, faceBox, samplesRef } = useCalibrationSession(cameraActive, recording, videoSize);
+
+  // MediaPipe runs alongside Presage, tracking neutral head orientation
+  // and resting posture to build the MediaPipeBaseline.
+  const mediaPipe = useMediaPipe(cameraActive, videoRef, recording);
+  const mediaPipeSamplesRef = mediaPipe.samplesRef;
 
   // Track the live video's intrinsic size so landmark coordinates can be
   // de-normalized if they ever arrive as pixels instead of 0..1.
@@ -200,7 +208,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   useEffect(() => {
     if (phase === "checking" && holdMs >= HOLD_STEADY_MS) {
-      setReadingInstructionsOpen(true);
+      setGazeCalibrationOpen(true);
       setPhase("recording");
     }
   }, [phase, holdMs]);
@@ -231,11 +239,14 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   useEffect(() => {
     if (phase === "recording" && elapsed >= RECORDING_SECONDS) {
       const baseline = buildBaseline(samplesRef.current, RECORDING_SECONDS * 1000);
+      // Attach MediaPipe baselines (neutral head angles, shoulder tilt, etc.)
+      // before handing off to the (possibly remote) persistence layer.
+      baseline.mediaPipe = buildMediaPipeBaseline(mediaPipeSamplesRef.current);
       pendingBaseline.current = { baseline, id: crypto.randomUUID() };
       void persistBaseline();
       setPhase("done");
     }
-  }, [phase, elapsed, samplesRef]);
+  }, [phase, elapsed, samplesRef, mediaPipeSamplesRef]);
 
   async function persistBaseline() {
     if (!pendingBaseline.current || saving) return;
@@ -301,7 +312,6 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               await saveInterviewProfile({
                 name: name.trim(),
                 targetRoles: targetRoles.trim(),
-                jobPosting: jobPosting.trim() || null,
                 resume: { name: resumeFile.name, size: resumeFile.size },
               });
               setPhase("checking");
@@ -315,7 +325,8 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
                 Personalize your interview prep.
               </h1>
               <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
-                Tell us what you&apos;re targeting so future practice questions can be shaped around your background and roles.
+                Tell us who you are and share your resume so future practice questions can be shaped around your
+                background. You&apos;ll add a job posting each time you start a session.
               </p>
             </div>
 
@@ -383,17 +394,6 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               </button>
               {resumeError && <span className="text-[12px] text-red-300">{resumeError}</span>}
             </div>
-
-            <label className="flex flex-col gap-2">
-              <span className="text-[13px] text-white/80">Job posting <span className="text-white/40">Optional</span></span>
-              <textarea
-                value={jobPosting}
-                onChange={(event) => setJobPosting(event.target.value)}
-                rows={6}
-                placeholder="Paste a job description here to tailor future questions even more closely."
-                className="resize-y border border-white/20 bg-transparent px-3 py-3 text-[14px] leading-relaxed text-white outline-none placeholder:text-white/25 focus:border-white/60"
-              />
-            </label>
 
             <div className="flex items-center justify-between gap-3 pt-1">
               <button
@@ -544,7 +544,46 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               </div>
             </div>
 
-            {readingInstructionsOpen && (
+            {/* Gaze calibration step — "look directly at the camera" */}
+            {gazeCalibrationOpen && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
+                <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
+                  <div className="flex items-center gap-3 mb-2">
+                    <ScanFace className="h-5 w-5 text-white/60" strokeWidth={1.6} />
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Posture baseline</p>
+                  </div>
+                  <h2 className="mt-2 text-[24px] font-800 tracking-tight" style={{ fontWeight: 800 }}>
+                    Hold your natural posture.
+                  </h2>
+                  <p className="mt-4 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
+                    Sit comfortably and face your screen. This sets your neutral posture baseline so we can track shifts and fidgeting during the interview.
+                  </p>
+                  <p className="mt-3 text-[14px] leading-relaxed text-white/50" style={{ fontWeight: 300 }}>
+                    {mediaPipe.status === "error"
+                      ? <span className="text-red-400">Error: {mediaPipe.error}</span>
+                      : mediaPipe.status === "loading"
+                        ? "Loading perception models…"
+                        : mediaPipe.lookingAtCamera
+                          ? gazeCalibrationDone ? "✓ Posture baseline captured" : "Great — hold steady for a moment…"
+                          : "Please look at your screen"}
+                  </p>
+                  <button
+                    onClick={() => {
+                      setGazeCalibrationOpen(false);
+                      setGazeCalibrationDone(true);
+                      setReadingInstructionsOpen(true);
+                    }}
+                    disabled={mediaPipe.status === "loading"}
+                    className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70 disabled:opacity-40"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Reading instructions modal */}
+            {readingInstructionsOpen && !gazeCalibrationOpen && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
                 <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
                   <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Before you begin</p>

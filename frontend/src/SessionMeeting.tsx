@@ -3,6 +3,7 @@ import { Video, VideoOff, PhoneOff, ChevronDown, ChevronUp, Activity } from "luc
 import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
+import { useMediaPipe } from "./useMediaPipe";
 
 import { dataRequest } from "./dataApi";
 import { SessionRecorder, type MetricValues } from "./sessionRecorder";
@@ -58,11 +59,34 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
     finally { setSaving(false); }
   }
 
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaPipe = useMediaPipe(!camOff, videoRef);
+
+  const statsRef = useRef({
+    // Sliding window of the last 60 frames (~15 seconds at 4fps)
+    recentLookHistory: [] as boolean[],
+  });
+
+  // Eye contact — posture shifts/fidgeting are now tracked inside
+  // useMediaPipe itself (see POSTURE_*/FIDGET_* constants there), so this
+  // effect only has to track the eye-contact rolling window.
+  useEffect(() => {
+    if (mediaPipe.status !== "ready") return;
+
+    // Maintain a sliding window of the last ~15 seconds of eye contact
+    statsRef.current.recentLookHistory.push(mediaPipe.lookingAtCamera);
+    if (statsRef.current.recentLookHistory.length > 60) {
+      statsRef.current.recentLookHistory.shift();
+    }
+  }, [mediaPipe]);
+
   // Real perception signal from the Presage SmartSpectra SDK — it owns
   // camera acquisition itself (see the `stream` handed to CameraFeed
   // below), analyzing the live feed for expression + HRV-based stress.
   // Fillers/pace still need a speech pipeline that isn't wired up yet, so
-  // those show as pending rather than invented numbers.
+  // those show as pending rather than invented numbers. `collect` feeds
+  // Presage's per-sample metrics into the Tiger Data window recorder above;
+  // MediaPipe's own signals (eye contact/posture) stay UI-only for now.
   const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff && !ending, collect);
 
   useEffect(() => {
@@ -81,16 +105,25 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   const clock = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
 
-  // Cardio/breathing/expression stay empty until the SDK's rPPG validation
-  // phase completes (it needs a still, centered, well-lit face for a few
-  // seconds) — show its hint instead of a bare dash while that's pending.
   const pending = status === "error" ? "Unavailable" : validationHint ?? "—";
+
+  const recentHistory = statsRef.current.recentLookHistory;
+  const eyeContactPct = recentHistory.length > 0 
+    ? Math.round((recentHistory.filter(Boolean).length / recentHistory.length) * 100)
+    : 100;
 
   const metrics = [
     { label: "Emotion", value: emotion ?? pending },
     { label: "Pulse", value: pulseBpm ? `${pulseBpm} bpm` : pending },
-    { label: "Fillers", value: "—" },
-    { label: "Pace", value: "—" },
+    { label: "Eye Contact", value: `${eyeContactPct}%` },
+    {
+      label: "Posture",
+      value: mediaPipe.isFidgeting
+        ? "Fidgeting"
+        : mediaPipe.postureShiftCount > 0
+          ? `Steady (${mediaPipe.postureShiftCount})`
+          : "Steady",
+    },
     { label: "Stress", value: stress ?? pending },
   ];
 
@@ -129,7 +162,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
               <span className="text-[13px]">Camera off</span>
             </div>
           ) : stream ? (
-            <CameraFeed stream={stream} />
+            <CameraFeed ref={videoRef} stream={stream} />
           ) : (
             <div className="flex flex-col items-center gap-2 text-white/25 px-6 text-center">
               <span className="text-[12px] uppercase tracking-[0.16em]">

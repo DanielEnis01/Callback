@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { SessionMeeting } from "./SessionMeeting";
 import { CalibrationSession } from "./CalibrationSession";
+import { SessionSetup } from "./SessionSetup";
 import { getBaseline, type Baseline } from "./baselineStore";
 
 interface DashboardProps {
@@ -110,12 +111,28 @@ const SectionCard: FC<{ title: string; children: ReactNode; className?: string; 
 
 export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
   const [view, setView] = useState<View>("dashboard");
+  const [inSessionSetup, setInSessionSetup] = useState(false);
   const [inMeeting, setInMeeting] = useState(false);
   const [inCalibration, setInCalibration] = useState(false);
+  // Require calibration before the very first session; after that, every
+  // session still goes through the SessionSetup gate below (resume/job
+  // posting/weakness) rather than straight into the meeting.
   const startSession = async () => {
-    if (await getBaseline()) setInMeeting(true);
+    if (await getBaseline()) setInSessionSetup(true);
     else setInCalibration(true);
   };
+
+  // Every session starts with a quick "what are you practicing for" gate —
+  // confirm/replace the resume and paste this session's job posting —
+  // before the meeting itself opens. See SessionSetup.tsx.
+  if (inSessionSetup) {
+    return (
+      <SessionSetup
+        onStart={() => { setInSessionSetup(false); setInMeeting(true); }}
+        onCancel={() => setInSessionSetup(false)}
+      />
+    );
+  }
 
   if (inMeeting) {
     return <SessionMeeting onEnd={() => { setInMeeting(false); setView("results"); }} />;
@@ -150,7 +167,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
         </div>
 
         <button
-          onClick={() => setInMeeting(true)}
+          onClick={startSession}
           aria-label="Start session"
           className="mt-6 flex h-10 w-full items-center justify-center bg-white text-black rounded-none transition-opacity active:opacity-70"
         >
@@ -446,7 +463,7 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
           ],
         },
         {
-          heading: "Motion & arousal",
+          heading: "Motion & stress",
           rows: [
             { label: "Seat micro-motion", value: fmt(baseline.microMotion.seat, 3) ?? "Not enough data" },
             { label: "Knee micro-motion", value: fmt(baseline.microMotion.knees, 3) ?? "Not enough data" },
@@ -477,7 +494,7 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
           ],
         },
         {
-          heading: "Motion & arousal",
+          heading: "Motion & stress",
           rows: [
             { label: "Seat micro-motion", value: "Low" },
             { label: "Knee micro-motion", value: "Low" },
