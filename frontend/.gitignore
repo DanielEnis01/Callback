@@ -5,12 +5,10 @@ dist-electron/
 release/
 .cache/
 .vite/
+vite.config.*.timestamp-*
+*.tsbuildinfo
+*.log
 
-# Local secrets. Keep the safe templates versioned.
+# Local keys/configuration. Commit only the template.
 .env*
 !.env.example
-
-# Local/editor files
-*.log
-*.tsbuildinfo
-.DS_Store
