@@ -4,15 +4,21 @@ import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
+import { useTTS } from "./useTTS";
+import { DevPanel } from "./DevPanel";
 
 interface SessionMeetingProps {
   onEnd: () => void;
 }
 
+/** Opening line the AI recruiter speaks the moment the session starts. */
+const OPENING_GREETING =
+  "Hi! Welcome to your mock interview session. I'm your Callback recruiter. " +
+  "Whenever you're ready, go ahead and tell me a little about yourself.";
+
 export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const [camOff, setCamOff] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [aiSpeaking, setAiSpeaking] = useState(true);
   const [minimized, setMinimized] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -38,13 +44,26 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff);
 
-  useEffect(() => {
-    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
+  // ── ElevenLabs TTS ──────────────────────────────────────────────────────────
+  const tts = useTTS();
+  // Ref so the greeting fires exactly once even under React Strict Mode's
+  // double-invocation of effects.
+  const greetingSpoken = useRef(false);
 
   useEffect(() => {
-    const t = setInterval(() => setAiSpeaking((s) => !s), 3200);
+    if (greetingSpoken.current) return;
+    greetingSpoken.current = true;
+    // Small delay to let the UI settle before audio starts — avoids the
+    // AudioContext being blocked by the browser before the first user gesture
+    // has fully propagated.
+    const t = setTimeout(() => tts.speak(OPENING_GREETING), 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Session clock
+  useEffect(() => {
+    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -136,13 +155,14 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
         {/* Right — AI recruiter orb */}
         <div className="relative border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
           <div className="w-[75%] max-w-[320px] aspect-square">
-            <VoiceOrb className="w-full h-full" speaking={aiSpeaking} />
+            {/* VoiceOrb is now driven by actual TTS playback state */}
+            <VoiceOrb className="w-full h-full" speaking={tts.speaking} />
           </div>
           <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">
             Callback Recruiter
           </span>
           <span className="absolute top-3 left-3 text-[11px] uppercase tracking-[0.14em] text-white/45">
-            {aiSpeaking ? "Speaking" : "Listening"}
+            {tts.speaking ? "Speaking" : "Listening"}
           </span>
         </div>
       </div>
@@ -195,6 +215,9 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
           End session
         </button>
       </footer>
+
+      {/* Dev tools — only visible in Vite dev mode */}
+      <DevPanel tts={tts} />
     </div>
   );
 };

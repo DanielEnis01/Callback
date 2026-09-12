@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 
 import servicesRouter from "./routes/services.js";
+import ttsRouter from "./routes/tts.js";
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -15,6 +16,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/services", servicesRouter);
+app.use("/api/tts", ttsRouter);
 
 app.listen(port, () => {
   console.log(`Callback backend listening on port ${port}`);
