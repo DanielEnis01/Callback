@@ -3,6 +3,7 @@ import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, U
 import { CameraFeed } from "./CameraFeed";
 import { useCalibrationSession, type CalibrationSample } from "./useCalibrationSession";
 import { saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
+import { uploadResume } from "./dataApi";
 import { fetchReadingText, fallbackQuotes } from "./readingText";
 
 interface CalibrationSessionProps {
@@ -76,6 +77,11 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   const [targetRoles, setTargetRoles] = useState("");
   const [jobPosting, setJobPosting] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [savedBaseline, setSavedBaseline] = useState(false);
+  const pendingBaseline = useRef<{ baseline: Baseline; id: ReturnType<typeof crypto.randomUUID> } | null>(null);
+  const uploadedFile = useRef<File | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [draggingResume, setDraggingResume] = useState(false);
   const [readingInstructionsOpen, setReadingInstructionsOpen] = useState(false);
@@ -225,10 +231,23 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   useEffect(() => {
     if (phase === "recording" && elapsed >= RECORDING_SECONDS) {
       const baseline = buildBaseline(samplesRef.current, RECORDING_SECONDS * 1000);
-      saveBaseline(baseline);
+      pendingBaseline.current = { baseline, id: crypto.randomUUID() };
+      void persistBaseline();
       setPhase("done");
     }
   }, [phase, elapsed, samplesRef]);
+
+  async function persistBaseline() {
+    if (!pendingBaseline.current || saving) return;
+    setSaving(true); setSaveError('');
+    try {
+      const { baseline, id } = pendingBaseline.current;
+      if (!baseline.sampleCount) throw new Error('No calibration readings were captured. Please recalibrate.');
+      await saveBaseline(baseline, id);
+      setSavedBaseline(true);
+    } catch (error) { setSaveError((error as Error).message); }
+    finally { setSaving(false); }
+  }
 
   const pct = Math.round((elapsed / RECORDING_SECONDS) * 100);
   const clock = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
@@ -265,20 +284,29 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
         )}
       </header>
 
+      {saveError && <p role="alert" className="px-6 py-3 text-red-200">{saveError}</p>}
       {phase === "profile" && (
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-8 sm:px-8">
           <form
             className="mx-auto flex w-full max-w-2xl flex-col gap-6"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
-              if (!profileReady || !resumeFile) return;
-              saveInterviewProfile({
+              if (!profileReady || !resumeFile || saving) return;
+              setSaving(true); setSaveError('');
+              try {
+              if (uploadedFile.current !== resumeFile) {
+                await uploadResume(resumeFile);
+                uploadedFile.current = resumeFile;
+              }
+              await saveInterviewProfile({
                 name: name.trim(),
                 targetRoles: targetRoles.trim(),
                 jobPosting: jobPosting.trim() || null,
                 resume: { name: resumeFile.name, size: resumeFile.size },
               });
               setPhase("checking");
+              } catch (error) { setSaveError((error as Error).message); }
+              finally { setSaving(false); }
             }}
           >
             <div>
@@ -377,7 +405,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               </button>
               <button
                 type="submit"
-                disabled={!profileReady}
+                disabled={!profileReady || saving}
                 className="h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity disabled:cursor-not-allowed disabled:opacity-30 active:opacity-70"
               >
                 Continue to camera check
@@ -568,14 +596,14 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               Baseline captured.
             </h1>
             <p className="text-[14px] text-white/55" style={{ fontWeight: 300 }}>
-              Saved on this device for now — once accounts are wired up this will move to your profile
-              automatically.
+              {savedBaseline ? 'Saved to your Tiger Data account.' : saving ? 'Saving your baseline…' : 'Your baseline has not been saved. Retry while this window is open.'}
             </p>
             <button
-              onClick={onDone}
+              onClick={savedBaseline ? onDone : persistBaseline}
+              disabled={saving}
               className="mt-2 flex items-center gap-2 bg-white text-black text-[13px] font-semibold px-6 h-11 rounded-none transition-opacity active:opacity-70"
             >
-              Done
+              {savedBaseline ? 'Done' : saving ? 'Saving…' : 'Retry save'}
             </button>
           </div>
         </div>

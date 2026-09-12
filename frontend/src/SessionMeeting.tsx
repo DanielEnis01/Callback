@@ -1,8 +1,11 @@
-import { useEffect, useState, FC } from "react";
+import { useEffect, useState, useRef, FC } from "react";
 import { Video, VideoOff, PhoneOff, ChevronDown, ChevronUp, Activity } from "lucide-react";
 import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
+
+import { dataRequest } from "./dataApi";
+import { SessionRecorder, type MetricValues } from "./sessionRecorder";
 
 interface SessionMeetingProps {
   onEnd: () => void;
@@ -14,12 +17,51 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const [aiSpeaking, setAiSpeaking] = useState(true);
   const [minimized, setMinimized] = useState(false);
 
+  const [recorder] = useState(() => new SessionRecorder(dataRequest));
+  const windowMetrics = useRef<MetricValues>({});
+  const endingRef = useRef(false);
+  const [ending, setEnding] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [storageError, setStorageError] = useState('');
+  const [storageStatus, setStorageStatus] = useState('Connecting to storage…');
+  const collect = (values: MetricValues) => { if (!endingRef.current) Object.assign(windowMetrics.current, values); };
+  const captureWindow = () => {
+    recorder.enqueue(windowMetrics.current);
+    windowMetrics.current = {};
+  };
+  useEffect(() => {
+    let current = true;
+    const flush = () => recorder.flush().then(() => {
+      if (current) { setStorageError(''); setStorageStatus('Saved to Tiger Data'); }
+    }).catch(error => { if (current) setStorageError(error.message); });
+    void flush();
+    const timer = setInterval(() => {
+      if (endingRef.current) return;
+      try { captureWindow(); void flush(); }
+      catch (error) { setStorageError((error as Error).message); setCamOff(true); }
+    }, 1000);
+    return () => { current = false; clearInterval(timer); };
+  }, [recorder]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, []);
+  async function finishSession() {
+    if (saving) return;
+    endingRef.current = true;
+    setEnding(true); setSaving(true); setStorageError('');
+    try { captureWindow(); await recorder.finish(); onEnd(); }
+    catch (error) { setStorageError((error as Error).message); }
+    finally { setSaving(false); }
+  }
+
   // Real perception signal from the Presage SmartSpectra SDK — it owns
   // camera acquisition itself (see the `stream` handed to CameraFeed
   // below), analyzing the live feed for expression + HRV-based stress.
   // Fillers/pace still need a speech pipeline that isn't wired up yet, so
   // those show as pending rather than invented numbers.
-  const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff);
+  const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff && !ending, collect);
 
   useEffect(() => {
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
@@ -70,6 +112,9 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
         </div>
       </header>
 
+      <div className="px-6 py-2 text-xs text-white/60" role={storageError ? 'alert' : 'status'}>
+        {storageError ? `Storage: ${storageError} ${recorder.pending} samples waiting. Keep this window open; saves retry automatically until you end the session.` : storageStatus}
+      </div>
       {/* Stage */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1.9fr_1fr] gap-4 p-4">
         {/* Left — user camera (mock) */}
@@ -162,11 +207,12 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
         )}
 
         <button
-          onClick={onEnd}
+          onClick={finishSession}
+          disabled={saving}
           className="shrink-0 flex items-center gap-2 bg-white text-black text-[13px] font-semibold px-5 h-11 rounded-none transition-opacity active:opacity-70"
         >
           <PhoneOff className="h-[16px] w-[16px]" strokeWidth={1.8} />
-          End session
+          {saving ? 'Saving…' : ending ? 'Retry save & finish' : 'End session'}
         </button>
       </footer>
     </div>

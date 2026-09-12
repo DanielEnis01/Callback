@@ -1,4 +1,5 @@
-import { useState, FC, ElementType, ReactNode } from "react";
+import SavedSessions from "./SavedSessions";
+import { useState, useEffect, FC, ElementType, ReactNode } from "react";
 import {
   LayoutDashboard,
   FileBarChart,
@@ -21,7 +22,7 @@ import {
 } from "lucide-react";
 import { SessionMeeting } from "./SessionMeeting";
 import { CalibrationSession } from "./CalibrationSession";
-import { getBaseline } from "./baselineStore";
+import { getBaseline, type Baseline } from "./baselineStore";
 
 interface DashboardProps {
   onLogout: () => void;
@@ -44,7 +45,7 @@ const navGroups: { heading?: string; items: NavItem[] }[] = [
 
 const bottomItems: NavItem[] = [
   { id: "settings", title: "Settings", icon: Settings },
-  { id: "dashboard", title: "Log out", icon: LogOut },
+  { id: "dashboard", title: "Account & documents", icon: LogOut },
 ];
 
 // ── Seeded demo data ──────────────────────────────────────────────
@@ -204,7 +205,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
             return (
             <button
               key={item.title}
-              onClick={() => (item.title === "Log out" ? onLogout() : setView("settings"))}
+              onClick={() => (item.title === "Account & documents" ? onLogout() : setView("settings"))}
               className={`flex items-center gap-3 px-2.5 py-2 rounded-none text-[13px] transition-colors ${
                 on ? "bg-white/10 text-white" : "text-white/50 hover:text-white/90"
               }`}
@@ -242,9 +243,10 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-8 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <div className="mx-auto max-w-5xl flex flex-col gap-6">
+              {(view === "dashboard" || view === "trends") && <p className="mb-6 border border-white/20 p-3 text-sm text-white/60">Preview analytics — these example scores are not your recordings. Open Sessions to inspect your saved data.</p>}
               {view === "dashboard" && <OverallView onStart={() => setInMeeting(true)} onViewSessions={() => setView("sessions")} />}
-              {view === "results" && <ResultsView onViewSessions={() => setView("sessions")} />}
-              {view === "sessions" && <SessionsView onOpen={() => setView("results")} />}
+              {view === "results" && <SavedSessions />}
+              {view === "sessions" && <SavedSessions />}
               {view === "trends" && <TrendsView />}
               {view === "settings" && <SettingsView onLogout={onLogout} />}
             </div>
@@ -416,7 +418,17 @@ function fmt(n: number | null | undefined, digits = 0): string | null {
 }
 
 const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) => {
-  const baseline = getBaseline();
+  const [baseline, setBaseline] = useState<Baseline | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let current = true;
+    getBaseline().then(value => { if (current) setBaseline(value); })
+      .catch(error => { if (current) setLoadError(error.message); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, []);
+  if (!baseline) return <div className="p-8 text-white/60"><p role={loadError ? 'alert' : 'status'}>{loading ? 'Loading baseline…' : loadError || 'No saved calibration yet.'}</p><button className="mt-6 border p-3" onClick={onRecalibrate}>Calibrate</button></div>;
 
   const headline = baseline
     ? [

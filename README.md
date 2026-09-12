@@ -1,5 +1,18 @@
 # Callback — Interview & Productivity Coach
 
+## Current implementation
+
+`frontend/` contains the React/Vite dashboard and Electron desktop wrapper.
+`backend/` is the Firebase-token-authenticated Tiger Data API. It stores
+original PDFs, versioned calibration baselines, user interview profiles,
+sessions, and time-series Presage samples. The executable, additive schema is
+[`backend/sql/tigerdata.sql`](backend/sql/tigerdata.sql); it preserves existing
+TigerBase data when reapplied.
+
+Start the backend with its [setup guide](backend/README.md), then run the
+frontend with `npm install && npm run electron:dev` from `frontend/`. See the
+frontend README for Firebase, Presage, and API environment variables.
+
 **Event:** HackRice · **Track:** Work & Productivity
 **Sponsor challenges targeted:** Best Use of ElevenLabs · Best Use of Presage · Best Use of Vultr · Best Use of Tiger Data · Best Use of Backboard · Best Use of Gemini API · Best Domain Name from GoDaddy Registry 
 

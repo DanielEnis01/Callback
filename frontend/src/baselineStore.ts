@@ -1,10 +1,4 @@
-/**
- * Local, per-device stand-in for a real "save the user's calibration
- * baseline" backend call. There's no accounts/database yet, so this just
- * persists to localStorage — swap `saveBaseline`/`getBaseline` for a real
- * API call once there's a backend + per-user auth; the `Baseline` shape
- * below is what should move over unchanged.
- */
+import { dataRequest } from "./dataApi";
 
 export interface Baseline {
   /** ISO timestamp of when calibration finished. */
@@ -43,52 +37,33 @@ export interface InterviewProfile {
   };
 }
 
-const STORAGE_KEY = "callback.baseline.v1";
-const PROFILE_STORAGE_KEY = "callback.interview-profile.v1";
-
-export function saveBaseline(baseline: Baseline): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(baseline));
-  } catch (err) {
-    console.error("Failed to save calibration baseline:", err);
-  }
+// raw_data preserves every measured calibration field alongside queryable columns.
+export async function saveBaseline(baseline: Baseline, baselineId = crypto.randomUUID()): Promise<void> {
+  await dataRequest('/baselines', {
+    baseline_id: baselineId, captured_at: baseline.capturedAt,
+    baseline_stress_index: baseline.baevsky, baseline_pulse: baseline.restingPulseBpm,
+    baseline_breathing_rate: baseline.breathingRatePerMin, baseline_blink_rate: baseline.blinkRatePerMin,
+    baseline_fidget_score: baseline.microMotion.seat, baseline_eda: baseline.edaMicroSiemens,
+    baseline_breathing_amplitude: baseline.breathingAmplitude, raw_data: baseline,
+  });
 }
-
-export function getBaseline(): Baseline | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Baseline) : null;
-  } catch (err) {
-    console.error("Failed to read calibration baseline:", err);
-    return null;
-  }
+export async function getBaseline(): Promise<Baseline | null> {
+  const result = await dataRequest<{ records: Array<Record<string, any>> }>('/baselines?limit=1');
+  const row = result.records[0];
+  if (!row) return null;
+  if (row.raw_data?.capturedAt && row.raw_data?.hrv && row.raw_data?.microMotion) return row.raw_data as Baseline;
+  return {
+    capturedAt: row.captured_at, sampleCount: 0, restingPulseBpm: row.baseline_pulse,
+    breathingRatePerMin: row.baseline_breathing_rate, breathingAmplitude: row.baseline_breathing_amplitude,
+    blinkRatePerMin: row.baseline_blink_rate, baevsky: row.baseline_stress_index,
+    stressLabel: row.baseline_stress_index == null ? null : row.baseline_stress_index < 100 ? 'Low' : row.baseline_stress_index < 300 ? 'Moderate' : 'High',
+    hrv: { rmssd: null, sdnn: null, meanNn: null }, edaMicroSiemens: row.baseline_eda,
+    microMotion: { seat: row.baseline_fidget_score, knees: null },
+  };
 }
-
-export function clearBaseline(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // ignore
-  }
+export async function saveInterviewProfile(profile: InterviewProfile): Promise<void> {
+  await dataRequest('/profile', profile, 'PATCH');
 }
-
-// The browser keeps the selected PDF only for the active session. Persist
-// its metadata and the text context here; a backend/secure file store can
-// later replace this with actual resume parsing and retention.
-export function saveInterviewProfile(profile: InterviewProfile): void {
-  try {
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
-  } catch (err) {
-    console.error("Failed to save interview profile:", err);
-  }
-}
-
-export function getInterviewProfile(): InterviewProfile | null {
-  try {
-    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as InterviewProfile) : null;
-  } catch (err) {
-    console.error("Failed to read interview profile:", err);
-    return null;
-  }
+export function getInterviewProfile(): Promise<InterviewProfile | null> {
+  return dataRequest('/interview-profile');
 }

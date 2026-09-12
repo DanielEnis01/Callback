@@ -7,13 +7,17 @@ static mock — the UI/flow (`App` → `Login` → `Dashboard` →
 preview" placeholders in Calibration and the interview session now show
 a real live feed from `getUserMedia` via `CameraFeed` / `useCamera`.
 
-The "Live monitoring" panel in `SessionMeeting` is still mock data that
-drifts randomly — real gaze/posture/filler-word signals from the
-perception pipeline get wired in later.
+Calibration baselines, original resume PDFs, interview-profile context, and
+measured Presage readings are saved through the authenticated Tiger Data API.
+Each session is created before samples are written; sample writes carry stable
+IDs and timestamps, so a retry after a connection loss does not duplicate data.
+Only values actually delivered by Presage are stored. Speech, gaze, and posture
+fields stay absent until their respective pipelines produce real measurements.
 
 ## Run in the browser (no camera-permission dance, quick iteration)
 
-First, create a local environment file and add a SmartSpectra API key:
+First, create a local environment file and add a SmartSpectra API key and the
+Firebase web configuration:
 
 ```
 cp .env.example .env
@@ -30,6 +34,18 @@ Then run:
 npm install
 npm run dev
 ```
+
+Start the API in a second terminal after following [the backend setup](../backend/README.md):
+
+```
+cd ../backend
+npm install
+npm start
+```
+
+Use `VITE_API_BASE_URL` when the API is not running at
+`http://127.0.0.1:3001`. Browser development requests can also use the Vite
+proxy at `/api`.
 
 ## Run as the Electron desktop app (camera in the designated panel)
 
@@ -54,3 +70,5 @@ left panel.
   prod: loads `dist/`)
 - `electron/preload.cjs` — empty for now; session-tracking IPC goes
   here later
+- `src/sessionRecorder.ts` — retry-safe session/sample persistence
+- `src/dataApi.ts` — Firebase-token-authenticated Tiger Data requests

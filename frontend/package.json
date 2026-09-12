@@ -5,17 +5,20 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "electron": "electron .",
-    "electron:dev": "concurrently -k -n VITE,ELECTRON -c blue,green \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_START_URL=http://localhost:5173 electron .\""
+    "electron:dev": "concurrently -k -n VITE,ELECTRON \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_START_URL=http://127.0.0.1:5173 electron .\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@smartspectra/node-sdk": "^3.3.0",
     "lucide-react": "^1.45.0",
     "ogl": "^1.0.11",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "firebase": "^12.19.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
@@ -29,7 +32,11 @@
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
     "vite": "^8.0.5",
-    "wait-on": "^8.0.1"
+    "wait-on": "^8.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "jsdom": "^26.1.0",
+    "vitest": "^5.0.0"
   },
   "main": "electron/main.cjs",
   "allowScripts": {

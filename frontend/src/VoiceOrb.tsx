@@ -147,7 +147,10 @@ export const VoiceOrb: FC<VoiceOrbProps> = ({ className, speaking = false }) => 
 
     let rafId: number;
     let renderer: Renderer | null = null;
-    let gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
+    // Renderer.gl carries OGL's canvas/renderer metadata in addition to the
+    // browser WebGL interface. Keeping that type preserves the relationship
+    // required by Program, Triangle, and Mesh.
+    let gl: Renderer["gl"] | null = null;
     let program: Program | null = null;
 
     renderer = new Renderer({ alpha: true, premultipliedAlpha: false, antialias: true, dpr: window.devicePixelRatio || 1 });

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SmartSpectraSDK, breathingMetrics, faceMetrics } from "@smartspectra/node-sdk/renderer";
+import { presageMetrics, type MetricValues } from "./sessionRecorder";
 import { decodeMetrics } from "@smartspectra/node-sdk/messages";
 
 // Requested individually below (not via the cardioMetrics bundle) so we can
@@ -93,7 +94,9 @@ const DEFAULT_STATE: PresageSession = {
  * actual API (SmartSpectra owns camera acquisition itself; see
  * CameraFeed's `stream` prop for how the picture reaches the screen).
  */
-export function usePresageSession(active: boolean): PresageSession {
+export function usePresageSession(active: boolean, onMetrics?: (metrics: MetricValues) => void): PresageSession {
+  const metricsCallback = useRef(onMetrics);
+  metricsCallback.current = onMetrics;
   const [state, setState] = useState<PresageSession>(DEFAULT_STATE);
 
   const smoothedScores = useRef<Record<string, number>>({});
@@ -167,7 +170,8 @@ export function usePresageSession(active: boolean): PresageSession {
       }
       if (typeof Buffer !== "undefined" && Buffer.isBuffer?.(metrics)) return;
 
-      const expression = last(metrics?.face?.expression);
+      metricsCallback.current?.(presageMetrics(metrics));
+      const expression = last<any>(metrics?.face?.expression);
       if (expression?.scores?.length) {
         for (const s of expression.scores) {
           const name = EXPRESSION_TYPE_NAMES[s.type] ?? String(s.type);
