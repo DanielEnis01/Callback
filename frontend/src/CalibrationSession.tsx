@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, FC } from "react";
 import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, UploadCloud } from "lucide-react";
 import { CameraFeed } from "./CameraFeed";
 import { useCalibrationSession, type CalibrationSample } from "./useCalibrationSession";
-import { saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
+import { remoteStorageEnabled, saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
 import { uploadResume } from "./dataApi";
 import { fetchReadingText, fallbackQuotes } from "./readingText";
 
@@ -294,7 +294,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               if (!profileReady || !resumeFile || saving) return;
               setSaving(true); setSaveError('');
               try {
-              if (uploadedFile.current !== resumeFile) {
+              if (remoteStorageEnabled && uploadedFile.current !== resumeFile) {
                 await uploadResume(resumeFile);
                 uploadedFile.current = resumeFile;
               }

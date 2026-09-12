@@ -6,6 +6,8 @@ import { usePresageSession } from "./usePresageSession";
 
 import { dataRequest } from "./dataApi";
 import { SessionRecorder, type MetricValues } from "./sessionRecorder";
+import { remoteStorageEnabled } from "./baselineStore";
+import { staticDataRequest } from "./staticSessionStore";
 
 interface SessionMeetingProps {
   onEnd: () => void;
@@ -17,13 +19,13 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const [aiSpeaking, setAiSpeaking] = useState(true);
   const [minimized, setMinimized] = useState(false);
 
-  const [recorder] = useState(() => new SessionRecorder(dataRequest));
+  const [recorder] = useState(() => new SessionRecorder(remoteStorageEnabled ? dataRequest : staticDataRequest));
   const windowMetrics = useRef<MetricValues>({});
   const endingRef = useRef(false);
   const [ending, setEnding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [storageError, setStorageError] = useState('');
-  const [storageStatus, setStorageStatus] = useState('Connecting to storage…');
+  const [storageStatus, setStorageStatus] = useState(remoteStorageEnabled ? 'Connecting to Tiger Data…' : 'Static mode: session data stays on this device.');
   const collect = (values: MetricValues) => { if (!endingRef.current) Object.assign(windowMetrics.current, values); };
   const captureWindow = () => {
     recorder.enqueue(windowMetrics.current);
@@ -32,7 +34,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   useEffect(() => {
     let current = true;
     const flush = () => recorder.flush().then(() => {
-      if (current) { setStorageError(''); setStorageStatus('Saved to Tiger Data'); }
+      if (current) { setStorageError(''); setStorageStatus(remoteStorageEnabled ? 'Saved to Tiger Data' : 'Saved on this device'); }
     }).catch(error => { if (current) setStorageError(error.message); });
     void flush();
     const timer = setInterval(() => {

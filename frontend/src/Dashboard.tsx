@@ -48,24 +48,16 @@ const bottomItems: NavItem[] = [
   { id: "dashboard", title: "Account & documents", icon: LogOut },
 ];
 
-// ── Seeded demo data ──────────────────────────────────────────────
+// ── Session-derived data ──────────────────────────────────────────
 const stats = [
-  { label: "Composite score", value: "78", unit: "/100", delta: "+6", up: true, base: "vs. last session" },
-  { label: "Filler words", value: "3.1", unit: "/min", delta: "-2.4", up: true, base: "vs. baseline" },
-  { label: "Eye contact", value: "82", unit: "%", delta: "+9", up: true, base: "vs. baseline" },
-  { label: "Avg stress", value: "Moderate", unit: "", delta: "peak after Q3", up: false, base: "Baevsky index" },
+  { label: "Composite score", value: "0", unit: "/100", delta: "No sessions yet", up: true, base: "" },
+  { label: "Filler words", value: "0", unit: "/min", delta: "No sessions yet", up: true, base: "" },
+  { label: "Eye contact", value: "0", unit: "%", delta: "No sessions yet", up: true, base: "" },
+  { label: "Avg stress", value: "0", unit: "", delta: "No sessions yet", up: true, base: "" },
 ];
 
-const weaknesses = [
-  { title: "Filler words cluster under pressure", detail: "14 fillers across your first two answers, dropping to 3 by the fourth — they spike when the question is unexpected.", metric: "filler-word count" },
-  { title: "Eye contact drops mid-answer", detail: "Gaze left the camera for 22s during the salary question, right as your stress index peaked.", metric: "gaze-away · stress spike" },
-  { title: "Restless posture", detail: "9 posture shifts in the last third of the session, reading as fidgeting rather than emphasis.", metric: "posture-shift count" },
-];
-
-const strengths = [
-  { title: "Breathing held steady", detail: "Stayed within 10% of your baseline the entire session." },
-  { title: "No long pauses", detail: "Zero pauses over 3s — answers stayed connected and confident." },
-];
+const weaknesses: { title: string; detail: string; metric: string }[] = [];
+const strengths: { title: string; detail: string }[] = [];
 
 const questions = [
   { q: "Tell me about yourself.", time: "1:12", fillers: 2, eye: 91, note: "Strong, well-paced opening.", weak: false },
@@ -74,22 +66,11 @@ const questions = [
   { q: "Why this company?", time: "1:20", fillers: 3, eye: 88, note: "Focused and specific — best close.", weak: false },
 ];
 
-const trend = [9.2, 7.8, 8.4, 6.1, 4.9, 3.1];
+const trend = [0, 0];
 
-const sessions = [
-  { id: 1, date: "Sept 12, 2026 · 5:19 AM", mode: "Interview", score: 78, weakness: "Eye contact under pressure" },
-  { id: 2, date: "Sept 10, 2026 · 9:02 PM", mode: "Interview", score: 72, weakness: "Filler words in openings" },
-  { id: 3, date: "Sept 8, 2026 · 8:41 PM", mode: "Focus", score: 69, weakness: "Slouching late in session" },
-  { id: 4, date: "Sept 5, 2026 · 7:15 PM", mode: "Interview", score: 64, weakness: "Fast speaking pace" },
-  { id: 5, date: "Sept 2, 2026 · 6:50 PM", mode: "Interview", score: 61, weakness: "Frequent long pauses" },
-  { id: 6, date: "Aug 30, 2026 · 10:04 AM", mode: "Focus", score: 58, weakness: "Distraction events" },
-];
+const sessions: { id: number; date: string; mode: string; score: number; weakness: string }[] = [];
 
-const overallWeaknesses = [
-  { title: "Frequent use of filler words", detail: "Averaging 6.4 fillers per minute across your last 5 sessions, heaviest in the opening minute of each answer.", freq: "5 of 6 sessions", metric: "filler-word count" },
-  { title: "Posture drifts into slouching", detail: "Sustained slouching in the back half of your sessions; posture shifts climb the longer a session runs.", freq: "4 of 6 sessions", metric: "posture-shift count" },
-  { title: "Eye contact breaks under pressure", detail: "Gaze consistently leaves the camera on compensation and conflict questions — the same categories each time.", freq: "3 of 6 sessions", metric: "gaze-away · stress" },
-];
+const overallWeaknesses: { title: string; detail: string; freq: string; metric: string }[] = [];
 
 const Sparkline: FC<{ data: number[]; label?: string }> = ({ data }) => {
   const w = 460;
@@ -131,6 +112,10 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
   const [view, setView] = useState<View>("dashboard");
   const [inMeeting, setInMeeting] = useState(false);
   const [inCalibration, setInCalibration] = useState(false);
+  const startSession = async () => {
+    if (await getBaseline()) setInMeeting(true);
+    else setInCalibration(true);
+  };
 
   if (inMeeting) {
     return <SessionMeeting onEnd={() => { setInMeeting(false); setView("results"); }} />;
@@ -244,7 +229,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
           <div className="flex-1 overflow-y-auto px-6 py-8 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <div className="mx-auto max-w-5xl flex flex-col gap-6">
               {(view === "dashboard" || view === "trends") && <p className="mb-6 border border-white/20 p-3 text-sm text-white/60">Preview analytics — these example scores are not your recordings. Open Sessions to inspect your saved data.</p>}
-              {view === "dashboard" && <OverallView onStart={() => setInMeeting(true)} onViewSessions={() => setView("sessions")} />}
+              {view === "dashboard" && <OverallView onStart={startSession} onViewSessions={() => setView("sessions")} />}
               {view === "results" && <SavedSessions />}
               {view === "sessions" && <SavedSessions />}
               {view === "trends" && <TrendsView />}

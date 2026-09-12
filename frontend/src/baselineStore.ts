@@ -1,44 +1,47 @@
 import { dataRequest } from "./dataApi";
 
 export interface Baseline {
-  /** ISO timestamp of when calibration finished. */
   capturedAt: string;
-  /** How many metrics samples the average below was computed from. */
   sampleCount: number;
-
   restingPulseBpm: number | null;
   breathingRatePerMin: number | null;
   breathingAmplitude: number | null;
   blinkRatePerMin: number | null;
-
-  hrv: {
-    rmssd: number | null;
-    sdnn: number | null;
-    meanNn: number | null;
-  };
+  hrv: { rmssd: number | null; sdnn: number | null; meanNn: number | null };
   baevsky: number | null;
   stressLabel: "Low" | "Moderate" | "High" | null;
-
   edaMicroSiemens: number | null;
-  microMotion: {
-    seat: number | null;
-    knees: number | null;
-  };
+  microMotion: { seat: number | null; knees: number | null };
 }
 
-/** Context collected before calibration for tailoring later interview practice. */
 export interface InterviewProfile {
   name: string;
   targetRoles: string;
   jobPosting: string | null;
-  resume: {
-    name: string;
-    size: number;
-  };
+  resume: { name: string; size: number };
 }
 
-// raw_data preserves every measured calibration field alongside queryable columns.
+const baselineKey = "callback.static.baseline.v1";
+const profileKey = "callback.static.interview-profile.v1";
+
+/** Enable only when Firebase login and the authenticated Tiger Data API are live. */
+export const remoteStorageEnabled = import.meta.env.VITE_ENABLE_REMOTE_STORAGE === "true";
+
+function read<T>(key: string): T | null {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) as T : null;
+  } catch {
+    return null;
+  }
+}
+
+function write(key: string, value: unknown) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
 export async function saveBaseline(baseline: Baseline, baselineId = crypto.randomUUID()): Promise<void> {
+  if (!remoteStorageEnabled) return write(baselineKey, baseline);
   await dataRequest('/baselines', {
     baseline_id: baselineId, captured_at: baseline.capturedAt,
     baseline_stress_index: baseline.baevsky, baseline_pulse: baseline.restingPulseBpm,
@@ -47,7 +50,9 @@ export async function saveBaseline(baseline: Baseline, baselineId = crypto.rando
     baseline_breathing_amplitude: baseline.breathingAmplitude, raw_data: baseline,
   });
 }
+
 export async function getBaseline(): Promise<Baseline | null> {
+  if (!remoteStorageEnabled) return read<Baseline>(baselineKey);
   const result = await dataRequest<{ records: Array<Record<string, any>> }>('/baselines?limit=1');
   const row = result.records[0];
   if (!row) return null;
@@ -61,9 +66,13 @@ export async function getBaseline(): Promise<Baseline | null> {
     microMotion: { seat: row.baseline_fidget_score, knees: null },
   };
 }
+
 export async function saveInterviewProfile(profile: InterviewProfile): Promise<void> {
+  if (!remoteStorageEnabled) return write(profileKey, profile);
   await dataRequest('/profile', profile, 'PATCH');
 }
-export function getInterviewProfile(): Promise<InterviewProfile | null> {
+
+export async function getInterviewProfile(): Promise<InterviewProfile | null> {
+  if (!remoteStorageEnabled) return read<InterviewProfile>(profileKey);
   return dataRequest('/interview-profile');
 }

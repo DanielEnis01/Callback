@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { dataRequest } from './dataApi';
+import { remoteStorageEnabled } from './baselineStore';
+import { getStaticSessions } from './staticSessionStore';
 
 type Session = { session_id: string; session_type: string; started_at: string; ended_at: string | null; duration_seconds: number | null };
 export default function SavedSessions() {
@@ -12,7 +14,9 @@ export default function SavedSessions() {
   useEffect(() => {
     let current = true;
     setLoading(true); setError(''); setSessions([]); setSelected(''); setMetrics([]);
-    dataRequest<{ records: Session[] }>(`/sessions?limit=25&offset=${offset}`)
+    (remoteStorageEnabled
+      ? dataRequest<{ records: Session[] }>(`/sessions?limit=25&offset=${offset}`)
+      : Promise.resolve({ records: getStaticSessions().slice(offset, offset + 25) as Session[] }))
       .then(data => { if (current) setSessions(data.records); })
       .catch(error => { if (current) setError(error.message); })
       .finally(() => { if (current) setLoading(false); });
@@ -22,7 +26,9 @@ export default function SavedSessions() {
     if (!selected) return;
     let current = true;
     setMetrics([]); setError('');
-    dataRequest<{ records: Record<string, unknown>[] }>(`/session-metrics?sessionId=${encodeURIComponent(selected)}&limit=100`)
+    (remoteStorageEnabled
+      ? dataRequest<{ records: Record<string, unknown>[] }>(`/session-metrics?sessionId=${encodeURIComponent(selected)}&limit=100`)
+      : Promise.resolve({ records: getStaticSessions().find(session => session.session_id === selected)?.metrics.slice(0, 100) || [] }))
       .then(data => { if (current) setMetrics(data.records); })
       .catch(error => { if (current) setError(error.message); });
     return () => { current = false; };
@@ -34,6 +40,6 @@ export default function SavedSessions() {
       {new Date(session.started_at).toLocaleString()} · {session.session_type} · {session.ended_at ? `${Math.round(session.duration_seconds || 0)} seconds` : 'Open / interrupted'}
     </button>)}
     <div className="flex gap-4"><button disabled={!offset || loading} onClick={() => setOffset(offset - 25)}>Previous</button><button disabled={sessions.length < 25 || loading} onClick={() => setOffset(offset + 25)}>Next</button></div>
-    {selected && <div><h2 className="text-xl">Latest 100 recorded samples</h2><p className="text-white/50 my-2">Only measured values are saved. Additional samples remain available through the paginated API.</p><pre className="overflow-auto border border-white/20 p-4 text-xs max-h-96">{JSON.stringify(metrics, null, 2)}</pre></div>}
+    {selected && <div><h2 className="text-xl">Latest 100 recorded samples</h2><p className="text-white/50 my-2">Only measured values are saved.{remoteStorageEnabled ? ' Additional samples remain available through the paginated API.' : ' Static mode keeps these on this device.'}</p><pre className="overflow-auto border border-white/20 p-4 text-xs max-h-96">{JSON.stringify(metrics, null, 2)}</pre></div>}
   </section>;
 }
