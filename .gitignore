@@ -7,6 +7,8 @@ release/
 .vite/
 
 # Local secrets. Keep the safe templates versioned.
+.env
+backend/.env
 .env*
 !.env.example
 
