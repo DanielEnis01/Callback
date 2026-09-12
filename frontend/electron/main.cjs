@@ -12,10 +12,14 @@ async function createWindow() {
   // frames. Ported from TestCamera/main.js, where this same call is what
   // makes the SDK actually receive video.
   if (process.platform === "darwin") {
-    const granted = await systemPreferences.askForMediaAccess("camera");
-    if (!granted) {
-      console.warn("Camera access was denied in macOS Privacy settings.");
-    }
+    // Ask for both camera and microphone — camera for SmartSpectra/preview,
+    // microphone for the Web Speech API voice conversation loop.
+    const [cameraGranted, micGranted] = await Promise.all([
+      systemPreferences.askForMediaAccess("camera"),
+      systemPreferences.askForMediaAccess("microphone"),
+    ]);
+    if (!cameraGranted) console.warn("Camera access was denied in macOS Privacy settings.");
+    if (!micGranted) console.warn("Microphone access was denied in macOS Privacy settings.");
   }
 
   const win = new BrowserWindow({
@@ -63,9 +67,21 @@ app.whenReady().then(() => {
   // its camera permission prompt. (SmartSpectra's own camera acquisition
   // is covered by askForMediaAccess above, not this — this is for
   // CalibrationSession's plain getUserMedia camera.)
+  // Allow media (camera), microphone, and speech recognition. The Web Speech
+  // API internally uses both the microphone permission and Chromium's speech
+  // recognition service — both must be allowed or it throws "not-allowed" /
+  // "service-not-allowed" before the user even speaks.
+  const ALLOWED_PERMISSIONS = new Set(["media", "microphone", "speech", "speechRecognition", "audioCapture"]);
+
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    if (permission === "media") return callback(true);
-    callback(false);
+    callback(ALLOWED_PERMISSIONS.has(permission));
+  });
+
+  // setPermissionCheckHandler is the synchronous gate checked *before* the
+  // async request handler — without it Chromium can deny speech recognition
+  // before it even fires the request callback.
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    return ALLOWED_PERMISSIONS.has(permission);
   });
 
   createWindow();
