@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "electron": "electron .",
-    "electron:dev": "concurrently -k -n VITE,ELECTRON \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_START_URL=http://127.0.0.1:5173 electron .\"",
+    "electron:dev": "PATH=/opt/homebrew/opt/node@22/bin:$PATH concurrently -k -n VITE,ELECTRON \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_START_URL=http://127.0.0.1:5173 electron .\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -39,6 +39,9 @@
     "vitest": "^5.0.0"
   },
   "main": "electron/main.cjs",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "allowScripts": {
     "electron@33.4.11": true
   }

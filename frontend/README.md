@@ -54,6 +54,9 @@ npm install
 npm run electron:dev
 ```
 
+This project requires Node 20.19+ or Node 22. The macOS Electron command
+selects Homebrew's `node@22` automatically when it is installed.
+
 This starts the Vite dev server and an Electron window pointed at it.
 On first run, macOS will prompt for camera access — allow it and the
 live feed appears in the Calibration screen and the interview session's
