@@ -1,0 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Sora', sans-serif;
+  --font-display: 'Sora', sans-serif;
+}
+
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
+/* The calibration prompt is intentionally user-paced; keep its native
+   scrollbar visible so there is a clear affordance that the passage can be
+   read by scrolling rather than automatically advancing. */
+.calibration-reading-passage {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.35) transparent;
+}
+
+.calibration-reading-passage::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+
+.calibration-reading-passage::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.35);
+  border-radius: 999px;
+}
