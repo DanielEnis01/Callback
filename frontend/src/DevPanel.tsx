@@ -1,30 +1,42 @@
 import { useState, FC } from "react";
-import { Terminal, X, Mic, MicOff, ChevronDown, ChevronUp } from "lucide-react";
-import { TTSControls } from "./useTTS";
+import { Terminal, X, Mic, MicOff, ChevronDown, ChevronUp, Square } from "lucide-react";
+import { ConversationControls } from "./useConversation";
 
 interface DevPanelProps {
-  tts: TTSControls;
+  conversation: ConversationControls;
 }
 
 const QUICK_PHRASES = [
-  "Welcome to your mock interview. Let's get started — tell me about yourself.",
-  "That's a great answer. Now, what would you say is your greatest weakness?",
-  "Interesting perspective. Where do you see yourself in five years?",
-  "Can you walk me through a time you faced a difficult challenge at work?",
-  "Why are you interested in this role specifically?",
-  "Do you have any questions for me about the position or the company?",
+  "Hi, I'm ready to start the interview.",
+  "I have five years of experience in software engineering.",
+  "My greatest strength is being a fast learner and adapting quickly.",
+  "I'd say my weakness is sometimes taking on too much at once.",
+  "I'm really excited about this role because of the team culture.",
+  "Do you have any questions for me about the position?",
 ];
 
 /**
- * DevPanel — floating developer tools for testing TTS during a session.
+ * DevPanel — floating developer tools for testing the voice conversation loop.
  * Only rendered in Vite dev mode (import.meta.env.DEV).
  */
-export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
+export const DevPanel: FC<DevPanelProps> = ({ conversation }) => {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [expanded, setExpanded] = useState(true);
 
   if (!import.meta.env.DEV) return null;
+
+  const { listening, aiSpeaking, error, startListening, stopListening, sendMessage, cancelAudio } = conversation;
+
+  const status = error ? "Error" : aiSpeaking ? "Speaking…" : listening ? "Listening…" : "Idle";
+  const statusColor = error ? "#f87171" : aiSpeaking ? "#4ade80" : listening ? "#60a5fa" : "#52525b";
+  const statusBg = error
+    ? "rgba(239,68,68,0.15)"
+    : aiSpeaking
+    ? "rgba(34,197,94,0.15)"
+    : listening
+    ? "rgba(96,165,250,0.15)"
+    : "rgba(255,255,255,0.06)";
 
   return (
     <div
@@ -56,17 +68,12 @@ export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
           cursor: "pointer",
           transition: "background 0.15s, color 0.15s",
         }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.color = "#fff";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa";
-        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#fff"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa"; }}
       >
         <Terminal size={16} />
       </button>
 
-      {/* Panel */}
       {open && (
         <div
           style={{
@@ -94,38 +101,25 @@ export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
             <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#71717a" }}>
               <Terminal size={12} />
               <span style={{ textTransform: "uppercase", letterSpacing: "0.12em", fontSize: "10px" }}>
-                Dev Tools — TTS
+                Dev Tools — Conversation
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-              {/* Status badge */}
               <span
                 style={{
                   fontSize: "10px",
                   padding: "2px 7px",
-                  borderRadius: "2px",
-                  background: tts.error
-                    ? "rgba(239,68,68,0.15)"
-                    : tts.speaking
-                    ? "rgba(34,197,94,0.15)"
-                    : "rgba(255,255,255,0.06)",
-                  color: tts.error ? "#f87171" : tts.speaking ? "#4ade80" : "#52525b",
+                  background: statusBg,
+                  color: statusColor,
                   letterSpacing: "0.1em",
                   textTransform: "uppercase",
                 }}
               >
-                {tts.error ? "Error" : tts.speaking ? "Speaking…" : "Idle"}
+                {status}
               </span>
               <button
                 onClick={() => setOpen(false)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#52525b",
-                  cursor: "pointer",
-                  padding: "2px",
-                  display: "flex",
-                }}
+                style={{ background: "none", border: "none", color: "#52525b", cursor: "pointer", padding: "2px", display: "flex" }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#fff")}
                 onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#52525b")}
               >
@@ -135,29 +129,73 @@ export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
           </div>
 
           {/* Error display */}
-          {tts.error && (
-            <div
-              style={{
-                padding: "8px 12px",
-                background: "rgba(239,68,68,0.08)",
-                color: "#f87171",
-                fontSize: "11px",
-                borderBottom: "1px solid rgba(239,68,68,0.15)",
-              }}
-            >
-              {tts.error}
+          {error && (
+            <div style={{ padding: "8px 12px", background: "rgba(239,68,68,0.08)", color: "#f87171", fontSize: "11px", borderBottom: "1px solid rgba(239,68,68,0.15)" }}>
+              {error}
             </div>
           )}
 
-          {/* Mock transcript input */}
+
+
+          {/* Mic controls */}
+          <div style={{ padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: "6px" }}>
+            <button
+              id="dev-mic-start-btn"
+              disabled={listening || aiSpeaking}
+              onClick={() => void startListening()}
+              style={{
+                flex: 1,
+                padding: "7px 0",
+                background: !listening && !aiSpeaking ? "rgba(96,165,250,0.15)" : "rgba(255,255,255,0.04)",
+                color: !listening && !aiSpeaking ? "#60a5fa" : "#52525b",
+                border: `1px solid ${!listening && !aiSpeaking ? "rgba(96,165,250,0.3)" : "rgba(255,255,255,0.08)"}`,
+                cursor: !listening && !aiSpeaking ? "pointer" : "not-allowed",
+                fontFamily: "inherit",
+                fontSize: "11px",
+                fontWeight: 600,
+                letterSpacing: "0.06em",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "5px",
+              }}
+            >
+              <Mic size={12} /> {listening ? "Listening…" : "Start Mic"}
+            </button>
+            <button
+              id="dev-mic-stop-btn"
+              disabled={!listening && !aiSpeaking}
+              onClick={() => { stopListening(); cancelAudio(); }}
+              style={{
+                flex: 1,
+                padding: "7px 0",
+                background: (listening || aiSpeaking) ? "rgba(239,68,68,0.12)" : "rgba(255,255,255,0.04)",
+                color: (listening || aiSpeaking) ? "#f87171" : "#52525b",
+                border: `1px solid ${(listening || aiSpeaking) ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.08)"}`,
+                cursor: (listening || aiSpeaking) ? "pointer" : "not-allowed",
+                fontFamily: "inherit",
+                fontSize: "11px",
+                fontWeight: 600,
+                letterSpacing: "0.06em",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "5px",
+              }}
+            >
+              <Square size={11} /> Stop
+            </button>
+          </div>
+
+          {/* Manual text input */}
           <div style={{ padding: "12px" }}>
             <label style={{ color: "#52525b", display: "block", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.1em", fontSize: "10px" }}>
-              Mock Transcript
+              Inject Mock Transcript
             </label>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="Type transcript text to synthesize…"
+              placeholder="Type to send directly through Gemini → TTS…"
               rows={3}
               style={{
                 width: "100%",
@@ -174,20 +212,18 @@ export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
               onFocus={(e) => ((e.currentTarget as HTMLTextAreaElement).style.borderColor = "rgba(255,255,255,0.3)")}
               onBlur={(e) => ((e.currentTarget as HTMLTextAreaElement).style.borderColor = "rgba(255,255,255,0.1)")}
             />
-
-            {/* Actions */}
             <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
               <button
-                id="dev-tts-speak-btn"
-                disabled={!text.trim() || tts.speaking}
-                onClick={() => tts.speak(text)}
+                id="dev-send-btn"
+                disabled={!text.trim() || aiSpeaking}
+                onClick={() => { sendMessage(text); setText(""); }}
                 style={{
                   flex: 1,
                   padding: "7px 0",
-                  background: text.trim() && !tts.speaking ? "#fff" : "rgba(255,255,255,0.06)",
-                  color: text.trim() && !tts.speaking ? "#000" : "#52525b",
+                  background: text.trim() && !aiSpeaking ? "#fff" : "rgba(255,255,255,0.06)",
+                  color: text.trim() && !aiSpeaking ? "#000" : "#52525b",
                   border: "none",
-                  cursor: text.trim() && !tts.speaking ? "pointer" : "not-allowed",
+                  cursor: text.trim() && !aiSpeaking ? "pointer" : "not-allowed",
                   fontFamily: "inherit",
                   fontSize: "11px",
                   fontWeight: 600,
@@ -196,31 +232,26 @@ export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "5px",
-                  transition: "background 0.15s, color 0.15s",
                 }}
               >
-                <Mic size={12} /> Speak
+                <Mic size={12} /> Send via Gemini
               </button>
               <button
-                id="dev-tts-cancel-btn"
-                disabled={!tts.speaking}
-                onClick={tts.cancel}
+                id="dev-cancel-btn"
+                disabled={!aiSpeaking}
+                onClick={cancelAudio}
                 style={{
-                  flex: 1,
-                  padding: "7px 0",
-                  background: tts.speaking ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.04)",
-                  color: tts.speaking ? "#f87171" : "#52525b",
-                  border: `1px solid ${tts.speaking ? "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.08)"}`,
-                  cursor: tts.speaking ? "pointer" : "not-allowed",
+                  padding: "7px 12px",
+                  background: aiSpeaking ? "rgba(239,68,68,0.12)" : "rgba(255,255,255,0.04)",
+                  color: aiSpeaking ? "#f87171" : "#52525b",
+                  border: `1px solid ${aiSpeaking ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.08)"}`,
+                  cursor: aiSpeaking ? "pointer" : "not-allowed",
                   fontFamily: "inherit",
                   fontSize: "11px",
                   fontWeight: 600,
-                  letterSpacing: "0.06em",
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center",
                   gap: "5px",
-                  transition: "background 0.15s, color 0.15s",
                 }}
               >
                 <MicOff size={12} /> Cancel
@@ -250,32 +281,21 @@ export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
               onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#a1a1aa")}
               onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#52525b")}
             >
-              Quick phrases
-              {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+              Quick phrases {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
             </button>
 
             {expanded && (
-              <div
-                style={{
-                  maxHeight: "180px",
-                  overflowY: "auto",
-                  padding: "0 8px 8px",
-                }}
-              >
+              <div style={{ maxHeight: "180px", overflowY: "auto", padding: "0 8px 8px" }}>
                 {QUICK_PHRASES.map((phrase, i) => (
                   <button
                     key={i}
-                    onClick={() => {
-                      setText(phrase);
-                      tts.speak(phrase);
-                    }}
+                    onClick={() => sendMessage(phrase)}
                     style={{
                       display: "block",
                       width: "100%",
                       textAlign: "left",
                       background: "none",
                       border: "1px solid transparent",
-                      borderRadius: "2px",
                       padding: "6px 8px",
                       color: "#71717a",
                       cursor: "pointer",
@@ -283,7 +303,6 @@ export const DevPanel: FC<DevPanelProps> = ({ tts }) => {
                       fontSize: "11px",
                       lineHeight: 1.4,
                       marginBottom: "2px",
-                      transition: "background 0.1s, color 0.1s, border-color 0.1s",
                     }}
                     onMouseEnter={(e) => {
                       const el = e.currentTarget as HTMLButtonElement;

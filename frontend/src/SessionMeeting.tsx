@@ -4,17 +4,12 @@ import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
-import { useTTS } from "./useTTS";
+import { useConversation } from "./useConversation";
 import { DevPanel } from "./DevPanel";
 
 interface SessionMeetingProps {
   onEnd: () => void;
 }
-
-/** Opening line the AI recruiter speaks the moment the session starts. */
-const OPENING_GREETING =
-  "Hi! Welcome to your mock interview session. I'm your Callback recruiter. " +
-  "Whenever you're ready, go ahead and tell me a little about yourself.";
 
 export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const [camOff, setCamOff] = useState(false);
@@ -44,22 +39,8 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff);
 
-  // ── ElevenLabs TTS ──────────────────────────────────────────────────────────
-  const tts = useTTS();
-  // Ref so the greeting fires exactly once even under React Strict Mode's
-  // double-invocation of effects.
-  const greetingSpoken = useRef(false);
-
-  useEffect(() => {
-    if (greetingSpoken.current) return;
-    greetingSpoken.current = true;
-    // Small delay to let the UI settle before audio starts — avoids the
-    // AudioContext being blocked by the browser before the first user gesture
-    // has fully propagated.
-    const t = setTimeout(() => tts.speak(OPENING_GREETING), 600);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // ── Voice conversation loop (STT → Gemini → ElevenLabs TTS) ─────────────────
+  const conversation = useConversation();
 
   // Session clock
   useEffect(() => {
@@ -76,7 +57,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const pending = status === "error" ? "Unavailable" : validationHint ?? "—";
 
   const recentHistory = statsRef.current.recentLookHistory;
-  const eyeContactPct = recentHistory.length > 0 
+  const eyeContactPct = recentHistory.length > 0
     ? Math.round((recentHistory.filter(Boolean).length / recentHistory.length) * 100)
     : 100;
 
@@ -117,7 +98,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
       {/* Stage */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1.9fr_1fr] gap-4 p-4">
-        {/* Left — user camera (mock) */}
+        {/* Left — user camera */}
         <div className="relative border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
           {camOff ? (
             <div className="flex flex-col items-center gap-3 text-white/40">
@@ -136,13 +117,37 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
               {error && <span className="text-[11px] normal-case text-white/35 max-w-sm">{error}</span>}
             </div>
           )}
+
           <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">You</span>
+
           {!camOff && (
             <span className="absolute top-3 left-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-white/45">
               <span className="h-2 w-2 bg-white" /> Live
             </span>
           )}
-          {/* small camera toggle, tucked in corner so it doesn't obstruct */}
+
+          {/* Mic is recording — micLevel bars (in the badge above) give live feedback */}
+
+          {/* Mic status badge with live volume bar */}
+          {conversation.listening && (
+            <span className="absolute top-3 right-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-blue-400 bg-black/50 px-2 py-1">
+              <span
+                className="h-3 w-1 rounded-full bg-blue-400"
+                style={{ transform: `scaleY(${0.3 + conversation.micLevel * 0.7})`, transition: "transform 0.05s" }}
+              />
+              <span
+                className="h-3 w-1 rounded-full bg-blue-400"
+                style={{ transform: `scaleY(${0.2 + conversation.micLevel * 0.8})`, transition: "transform 0.08s" }}
+              />
+              <span
+                className="h-3 w-1 rounded-full bg-blue-400"
+                style={{ transform: `scaleY(${0.4 + conversation.micLevel * 0.6})`, transition: "transform 0.06s" }}
+              />
+              Listening
+            </span>
+          )}
+
+          {/* Camera toggle */}
           <button
             onClick={() => setCamOff((c) => !c)}
             aria-label={camOff ? "Start video" : "Stop video"}
@@ -155,15 +160,25 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
         {/* Right — AI recruiter orb */}
         <div className="relative border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
           <div className="w-[75%] max-w-[320px] aspect-square">
-            {/* VoiceOrb is now driven by actual TTS playback state */}
-            <VoiceOrb className="w-full h-full" speaking={tts.speaking} />
+            {/* VoiceOrb driven by actual TTS playback state */}
+            <VoiceOrb className="w-full h-full" speaking={conversation.aiSpeaking} />
           </div>
           <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">
             Callback Recruiter
           </span>
           <span className="absolute top-3 left-3 text-[11px] uppercase tracking-[0.14em] text-white/45">
-            {tts.speaking ? "Speaking" : "Listening"}
+            {conversation.aiSpeaking ? "Speaking" : conversation.listening ? "Listening to you" : "Ready"}
           </span>
+
+          {/* TTS error */}
+          {conversation.error && (
+            <div
+              className="absolute bottom-10 left-3 right-3 text-center px-3 py-1.5 text-[11px] text-red-400 leading-snug"
+              style={{ background: "rgba(0,0,0,0.65)" }}
+            >
+              {conversation.error}
+            </div>
+          )}
         </div>
       </div>
 
@@ -217,7 +232,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
       </footer>
 
       {/* Dev tools — only visible in Vite dev mode */}
-      <DevPanel tts={tts} />
+      <DevPanel conversation={conversation} />
     </div>
   );
 };
