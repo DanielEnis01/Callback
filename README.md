@@ -50,6 +50,24 @@ This isn't a single left-to-right pipeline — several agents talk directly to e
 
 ---
 
+## Project structure
+
+```
+Callback/
+  frontend/     # placeholder — Interview/Focus Mode UI + dashboard (not built yet)
+  backend/      # Node/Express backend
+    src/
+      services/ # one module per integration — gemini, elevenlabs, presage, tigerdata, backboard
+      routes/
+      index.js
+  python/       # placeholder — Perception (MediaPipe) + Speech (ASR) agents (not built yet)
+```
+
+Each file in `backend/src/services/` is a skeleton with stubbed, throwing
+functions to be filled in as each integration gets wired up.
+
+---
+
 ## Agents
 
 | Agent | Role | Built with |
