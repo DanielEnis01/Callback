@@ -14,6 +14,9 @@ IDs and timestamps, so a retry after a connection loss does not duplicate data.
 Only values actually delivered by Presage are stored. Speech, gaze, and posture
 fields stay absent until their respective pipelines produce real measurements.
 
+The current build opens directly to the dashboard. Firebase sign-in components
+remain in `src/` but are intentionally not mounted until account setup resumes.
+
 ## Run in the browser (no camera-permission dance, quick iteration)
 
 First, create a local environment file and add a SmartSpectra API key and the
