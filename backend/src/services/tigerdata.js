@@ -1,9 +1,15 @@
-// Tiger Data (Postgres / TimescaleDB) — structured, time-ordered session metrics.
-// Filler-word rate, gaze-away seconds, engagement/stress trend, pulse, vitals.
+// TigerData (PostgreSQL / TimescaleDB)
+// Passive numeric ledger for Callback session metrics, user trends, baselines, and metadata.
 
 import pg from "pg";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const { Pool } = pg;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export function isTigerDataConfigured() {
   return Boolean(
@@ -48,7 +54,7 @@ tigerDb.on("error", (err) => {
 export async function initTigerData() {
   if (!isTigerDataConfigured()) {
     console.warn(
-      "TigerData configuration not found (set TIGER_DATA_HOST, TIGER_DATA_PORT, TIGER_DATA_USER, TIGER_DATA_PASSWORD, TIGER_DATA_DATABASE in backend/.env). Running without persistent database connection."
+      "TigerData configuration not found (set TIGER_DATA_HOST, TIGER_DATA_PORT, etc. in backend/.env). Running without persistent database connection."
     );
     return false;
   }
@@ -57,62 +63,16 @@ export async function initTigerData() {
     const connCheck = await tigerDb.query("SELECT NOW() as now;");
     console.log("TigerData connected:", connCheck.rows[0]);
 
-    // Create table if not exists
-    await tigerDb.query(`
-      CREATE TABLE IF NOT EXISTS interview_sessions (
-        session_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        job_id TEXT,
-        interview_type TEXT,
-        duration_seconds INTEGER DEFAULT 0,
-        backboard_thread_id TEXT,
-        filler_word_count INTEGER DEFAULT 0,
-        total_words INTEGER DEFAULT 0,
-        filler_rate DOUBLE PRECISION DEFAULT 0.0,
-        gaze_away_seconds INTEGER DEFAULT 0,
-        gaze_away_percentage DOUBLE PRECISION DEFAULT 0.0,
-        posture_score DOUBLE PRECISION,
-        avg_stress_score DOUBLE PRECISION,
-        max_stress_score DOUBLE PRECISION,
-        avg_engagement_score DOUBLE PRECISION,
-        avg_pulse DOUBLE PRECISION,
-        min_pulse DOUBLE PRECISION,
-        max_pulse DOUBLE PRECISION,
-        avg_breathing_rate DOUBLE PRECISION,
-        weakest_question_type TEXT,
-        strongest_question_type TEXT,
-        raw_metrics JSONB,
-        PRIMARY KEY (created_at, session_id)
-      );
-    `);
-
-    // Create index on user_id and created_at
-    await tigerDb.query(`
-      CREATE INDEX IF NOT EXISTS idx_interview_sessions_user_time 
-      ON interview_sessions (user_id, created_at DESC);
-    `);
-
-    // Try converting to hypertable if TimescaleDB extension is present
-    try {
-      await tigerDb.query(`
-        DO $$
-        BEGIN
-          IF EXISTS (
-            SELECT 1 FROM pg_proc WHERE proname = 'create_hypertable'
-          ) THEN
-            PERFORM create_hypertable('interview_sessions', 'created_at', if_not_exists => TRUE);
-          END IF;
-        EXCEPTION
-          WHEN OTHERS THEN
-            NULL;
-        END $$;
-      `);
-    } catch (htErr) {
-      // Hypertable conversion might already exist or not be supported
+    // Load and execute the full DDL schema from sql/tigerdata.sql
+    const sqlPath = path.resolve(__dirname, "../../sql/tigerdata.sql");
+    if (fs.existsSync(sqlPath)) {
+      const sqlContent = fs.readFileSync(sqlPath, "utf-8");
+      await tigerDb.query(sqlContent);
+    } else {
+      console.warn("SQL schema file not found at", sqlPath);
     }
 
-    console.log("TigerData interview_sessions hypertable is ready");
+    console.log("TigerData schema, views, and session_metrics hypertable are ready");
     return true;
   } catch (err) {
     console.error("Failed to initialize TigerData database:", err.message);
@@ -132,13 +92,14 @@ export async function checkTigerDataHealth() {
 
   try {
     const res = await tigerDb.query(
-      "SELECT NOW() as current_time, count(*) as count FROM interview_sessions;"
+      "SELECT NOW() as current_time, (SELECT count(*) FROM sessions) as session_count, (SELECT count(*) FROM session_metrics) as metrics_count;"
     );
     return {
       service: "tigerdata",
       status: "connected",
-      message: "Successfully connected to TigerData hypertable.",
-      totalSessionsRecorded: parseInt(res.rows[0]?.count || 0, 10),
+      message: "Successfully connected to TigerData hypertable & views.",
+      totalSessions: parseInt(res.rows[0]?.session_count || 0, 10),
+      totalMetrics: parseInt(res.rows[0]?.metrics_count || 0, 10),
       serverTime: res.rows[0]?.current_time,
     };
   } catch (err) {
@@ -148,6 +109,143 @@ export async function checkTigerDataHealth() {
       message: err.message,
     };
   }
+}
+
+export async function ensureUserExists({ userId, email = null, name = null }) {
+  if (!userId) throw new Error("userId is required");
+  const query = `
+    INSERT INTO users (user_id, email, name)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (user_id) DO UPDATE 
+    SET 
+      email = COALESCE(EXCLUDED.email, users.email),
+      name = COALESCE(EXCLUDED.name, users.name)
+    RETURNING *;
+  `;
+  const res = await tigerDb.query(query, [userId, email, name]);
+  return res.rows[0];
+}
+
+export async function recordResumeMetadata({
+  resumeId,
+  userId,
+  filename,
+  backboardDocumentId = null,
+}) {
+  if (!filename || !filename.toLowerCase().endsWith(".pdf")) {
+    throw new Error("Filename must have a .pdf extension.");
+  }
+  await ensureUserExists({ userId });
+
+  const query = `
+    INSERT INTO resumes (resume_id, user_id, filename, backboard_document_id)
+    VALUES ($1, $2, $3, $4)
+    RETURNING *;
+  `;
+  const res = await tigerDb.query(query, [
+    resumeId,
+    userId,
+    filename,
+    backboardDocumentId,
+  ]);
+  return res.rows[0];
+}
+
+export async function recordJobPostingMetadata({
+  jobPostingId,
+  userId,
+  jobTitle = null,
+  companyName = null,
+  filename = null,
+  backboardDocumentId = null,
+}) {
+  await ensureUserExists({ userId });
+
+  const query = `
+    INSERT INTO job_postings (
+      job_posting_id,
+      user_id,
+      job_title,
+      company_name,
+      filename,
+      backboard_document_id
+    ) VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (job_posting_id) DO UPDATE
+    SET 
+      job_title = COALESCE(EXCLUDED.job_title, job_postings.job_title),
+      company_name = COALESCE(EXCLUDED.company_name, job_postings.company_name),
+      backboard_document_id = COALESCE(EXCLUDED.backboard_document_id, job_postings.backboard_document_id)
+    RETURNING *;
+  `;
+  const res = await tigerDb.query(query, [
+    jobPostingId,
+    userId,
+    jobTitle,
+    companyName,
+    filename,
+    backboardDocumentId,
+  ]);
+  return res.rows[0];
+}
+
+export async function recordBaseline({
+  baselineId,
+  userId,
+  baselineData = {},
+  capturedAt = new Date(),
+}) {
+  await ensureUserExists({ userId });
+
+  const {
+    stressIndex = null,
+    pulse = null,
+    breathingRate = null,
+    blinkRate = null,
+    fidgetScore = null,
+    eda = null,
+    arterialPressure = null,
+    breathingAmplitude = null,
+    inhaleExhaleRatio = null,
+    ...raw
+  } = baselineData;
+
+  const query = `
+    INSERT INTO baselines (
+      baseline_id,
+      user_id,
+      captured_at,
+      baseline_stress_index,
+      baseline_pulse,
+      baseline_breathing_rate,
+      baseline_blink_rate,
+      baseline_fidget_score,
+      baseline_eda,
+      baseline_arterial_pressure,
+      baseline_breathing_amplitude,
+      baseline_inhale_exhale_ratio,
+      raw_data
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    RETURNING *;
+  `;
+
+  const values = [
+    baselineId,
+    userId,
+    capturedAt,
+    stressIndex,
+    pulse,
+    breathingRate,
+    blinkRate,
+    fidgetScore,
+    eda,
+    arterialPressure,
+    breathingAmplitude,
+    inhaleExhaleRatio,
+    JSON.stringify(raw),
+  ];
+
+  const res = await tigerDb.query(query, values);
+  return res.rows[0];
 }
 
 export async function logSessionMetrics({
@@ -161,102 +259,224 @@ export async function logSessionMetrics({
     throw new Error("TigerData is not configured (missing TIGER_DATA credentials).");
   }
 
+  // 1. Ensure user exists
+  await ensureUserExists({ userId });
+
+  // 2. Insert into relational sessions table (triggers users.total_session_count + 1)
   const {
+    jobPostingId = null,
     jobId = null,
-    interviewType = null,
+    interviewType = "general",
     durationSeconds = 0,
     backboardThreadId = null,
+    status = "completed",
   } = metadata;
 
+  const resolvedJobPostingId = jobPostingId || jobId;
+  let validJobPostingId = null;
+
+  if (resolvedJobPostingId) {
+    // Upsert stub job posting if it doesn't exist yet to satisfy foreign key
+    await tigerDb.query(
+      `
+        INSERT INTO job_postings (job_posting_id, user_id, job_title)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (job_posting_id) DO NOTHING;
+      `,
+      [resolvedJobPostingId, userId, resolvedJobPostingId]
+    );
+    validJobPostingId = resolvedJobPostingId;
+  }
+
+  // Insert or ignore if session already exists
+  await tigerDb.query(
+    `
+      INSERT INTO sessions (
+        session_id,
+        user_id,
+        job_posting_id,
+        interview_type,
+        started_at,
+        duration_seconds,
+        status,
+        backboard_thread_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (session_id) DO NOTHING;
+    `,
+    [
+      sessionId,
+      userId,
+      validJobPostingId,
+      interviewType,
+      createdAt,
+      durationSeconds,
+      status,
+      backboardThreadId,
+    ]
+  );
+
+  // 3. Extract and compute session metrics
   const {
     fillerWordCount = 0,
     totalWords = 0,
+    fillerWordRate = null,
+    speakingRateWpm = null,
+    pauseFrequency = null,
+    avgPauseDuration = null,
+    topicRelevanceScore = null,
+
     gazeAwaySeconds = 0,
+    postureStabilityScore = null,
     postureScore = null,
+
+    dominantEmotion = null,
+    emotionBreakdown = null,
+    stressIndexBaevsky = null,
     avgStressScore = null,
-    maxStressScore = null,
-    avgEngagementScore = null,
+    rmssd = null,
+    sdnn = null,
+    meanNn = null,
+    pulseRate = null,
     avgPulse = null,
-    minPulse = null,
-    maxPulse = null,
+    breathingRate = null,
     avgBreathingRate = null,
+    blinkRate = null,
+
+    apneaEventCount = 0,
+    fidgetScoreSeat = null,
+    fidgetScoreKnee = null,
+    edaLevel = null,
+    arterialPressureRelative = null,
+    breathingUpperLowerRatio = null,
+    inhaleExhaleRatio = null,
+    respiratoryLineLength = null,
+    breathingAmplitude = null,
+
+    consistencyConfidenceScore = null,
+    overallSessionScore = null,
+    avgEngagementScore = null,
     weakestQuestionType = null,
     strongestQuestionType = null,
     ...extraMetrics
   } = metrics;
 
-  // Derive calculated rates
-  const fillerRate =
-    totalWords > 0
+  // Resolved metrics with fallback support
+  const resolvedFillerRate =
+    fillerWordRate !== null
+      ? fillerWordRate
+      : totalWords > 0
       ? Number(((fillerWordCount / totalWords) * 100).toFixed(2))
       : 0.0;
 
-  const gazeAwayPercentage =
-    durationSeconds > 0
-      ? Number(((gazeAwaySeconds / durationSeconds) * 100).toFixed(2))
-      : 0.0;
+  const resolvedStress =
+    stressIndexBaevsky !== null ? stressIndexBaevsky : avgStressScore;
+  const resolvedPulse = pulseRate !== null ? pulseRate : avgPulse;
+  const resolvedBreathingRate =
+    breathingRate !== null ? breathingRate : avgBreathingRate;
+  const resolvedPosture =
+    postureStabilityScore !== null ? postureStabilityScore : postureScore;
+  const resolvedOverallScore =
+    overallSessionScore !== null
+      ? overallSessionScore
+      : avgEngagementScore !== null
+      ? Number((avgEngagementScore * 10).toFixed(1))
+      : null;
 
-  const query = `
-    INSERT INTO interview_sessions (
+  // 4. Insert into session_metrics hypertable
+  const insertMetricQuery = `
+    INSERT INTO session_metrics (
+      recorded_at,
       session_id,
       user_id,
-      created_at,
-      job_id,
-      interview_type,
-      duration_seconds,
-      backboard_thread_id,
+
       filler_word_count,
-      total_words,
-      filler_rate,
+      filler_word_rate,
+      speaking_rate_wpm,
+      pause_frequency,
+      avg_pause_duration,
+      topic_relevance_score,
+
       gaze_away_seconds,
-      gaze_away_percentage,
-      posture_score,
-      avg_stress_score,
-      max_stress_score,
-      avg_engagement_score,
-      avg_pulse,
-      min_pulse,
-      max_pulse,
-      avg_breathing_rate,
+      posture_stability_score,
+
+      dominant_emotion,
+      emotion_breakdown,
+      stress_index_baevsky,
+      rmssd,
+      sdnn,
+      mean_nn,
+      pulse_rate,
+      breathing_rate,
+      blink_rate,
+
+      apnea_event_count,
+      fidget_score_seat,
+      fidget_score_knee,
+      eda_level,
+      arterial_pressure_relative,
+      breathing_upper_lower_ratio,
+      inhale_exhale_ratio,
+      respiratory_line_length,
+      breathing_amplitude,
+
+      consistency_confidence_score,
+      overall_session_score,
       weakest_question_type,
       strongest_question_type,
       raw_metrics
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
       $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-      $21, $22, $23
+      $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+      $31, $32, $33, $34
     )
     RETURNING *;
   `;
 
   const values = [
+    createdAt,
     sessionId,
     userId,
-    createdAt,
-    jobId,
-    interviewType,
-    durationSeconds,
-    backboardThreadId,
+
     fillerWordCount,
-    totalWords,
-    fillerRate,
+    resolvedFillerRate,
+    speakingRateWpm,
+    pauseFrequency,
+    avgPauseDuration,
+    topicRelevanceScore,
+
     gazeAwaySeconds,
-    gazeAwayPercentage,
-    postureScore,
-    avgStressScore,
-    maxStressScore,
-    avgEngagementScore,
-    avgPulse,
-    minPulse,
-    maxPulse,
-    avgBreathingRate,
+    resolvedPosture,
+
+    dominantEmotion,
+    emotionBreakdown ? JSON.stringify(emotionBreakdown) : null,
+    resolvedStress,
+    rmssd,
+    sdnn,
+    meanNn,
+    resolvedPulse,
+    resolvedBreathingRate,
+    blinkRate,
+
+    apneaEventCount,
+    fidgetScoreSeat,
+    fidgetScoreKnee,
+    edaLevel,
+    arterialPressureRelative,
+    breathingUpperLowerRatio,
+    inhaleExhaleRatio,
+    respiratoryLineLength,
+    breathingAmplitude,
+
+    consistencyConfidenceScore,
+    resolvedOverallScore,
     weakestQuestionType,
     strongestQuestionType,
     JSON.stringify(extraMetrics),
   ];
 
-  const result = await tigerDb.query(query, values);
-  return result.rows[0];
+  const res = await tigerDb.query(insertMetricQuery, values);
+  return res.rows[0];
 }
 
 export async function getRecentSessions({ userId, limit = 5 }) {
@@ -265,10 +485,28 @@ export async function getRecentSessions({ userId, limit = 5 }) {
   }
 
   const query = `
-    SELECT *
-    FROM interview_sessions
-    WHERE user_id = $1
-    ORDER BY created_at DESC
+    SELECT 
+      s.session_id,
+      s.user_id,
+      s.job_posting_id,
+      s.interview_type,
+      s.started_at,
+      s.duration_seconds,
+      s.status,
+      m.filler_word_count,
+      m.filler_word_rate,
+      m.gaze_away_seconds,
+      m.stress_index_baevsky,
+      m.pulse_rate,
+      m.breathing_rate,
+      m.overall_session_score,
+      m.weakest_question_type,
+      m.strongest_question_type,
+      m.emotion_breakdown
+    FROM sessions s
+    LEFT JOIN session_metrics m ON s.session_id = m.session_id
+    WHERE s.user_id = $1
+    ORDER BY s.started_at DESC
     LIMIT $2;
   `;
 
@@ -276,14 +514,39 @@ export async function getRecentSessions({ userId, limit = 5 }) {
   return result.rows;
 }
 
+export async function getSessionMetricsWithBaselineDeltas({ userId, limit = 5 }) {
+  const query = `
+    SELECT *
+    FROM session_metrics_with_baseline_delta
+    WHERE user_id = $1
+    ORDER BY recorded_at DESC
+    LIMIT $2;
+  `;
+  const result = await tigerDb.query(query, [userId, limit]);
+  return result.rows;
+}
+
 export async function getSessionTrends({ userId, limit = 5 }) {
   const sessions = await getRecentSessions({ userId, limit });
+
+  // Also query the rolling averages view
+  let rolling = null;
+  try {
+    const rollingRes = await tigerDb.query(
+      `SELECT * FROM latest_user_metric_trends WHERE user_id = $1;`,
+      [userId]
+    );
+    rolling = rollingRes.rows[0] || null;
+  } catch (err) {
+    // view might be empty or fallback
+  }
 
   if (!sessions || sessions.length === 0) {
     return {
       userId,
       sessionCount: 0,
       trendSummary: "No previous interview session data available for this user.",
+      rollingAverages: null,
       recentSessions: [],
     };
   }
@@ -297,7 +560,8 @@ export async function getSessionTrends({ userId, limit = 5 }) {
     return {
       userId,
       sessionCount: 1,
-      trendSummary: `Baseline established from 1 interview session: filler-word rate is ${s.filler_rate}%, average stress score is ${Number(s.avg_stress_score ?? 0).toFixed(2)}, engagement is ${Number(s.avg_engagement_score ?? 0).toFixed(2)}.${weakInfo}`,
+      trendSummary: `Baseline established from 1 interview session: filler-word rate is ${s.filler_word_rate}%, stress score is ${Number(s.stress_index_baevsky ?? 0).toFixed(2)}, overall score is ${Number(s.overall_session_score ?? 0).toFixed(2)}.${weakInfo}`,
+      rollingAverages: rolling,
       recentSessions: sessions,
     };
   }
@@ -306,9 +570,6 @@ export async function getSessionTrends({ userId, limit = 5 }) {
   const latest = sessions[0];
   const oldest = sessions[sessions.length - 1];
 
-  // Calculate percentage improvements
-  // For filler rate and stress: lower is better -> (oldest - latest) / oldest
-  // For engagement: higher is better -> (latest - oldest) / oldest
   function calcImprovement(oldVal, newVal, lowerIsBetter = false) {
     const o = Number(oldVal ?? 0);
     const n = Number(newVal ?? 0);
@@ -327,18 +588,18 @@ export async function getSessionTrends({ userId, limit = 5 }) {
   }
 
   const fillerChange = calcImprovement(
-    oldest.filler_rate,
-    latest.filler_rate,
+    oldest.filler_word_rate,
+    latest.filler_word_rate,
     true
   );
   const stressChange = calcImprovement(
-    oldest.avg_stress_score,
-    latest.avg_stress_score,
+    oldest.stress_index_baevsky,
+    latest.stress_index_baevsky,
     true
   );
-  const engagementChange = calcImprovement(
-    oldest.avg_engagement_score,
-    latest.avg_engagement_score,
+  const scoreChange = calcImprovement(
+    oldest.overall_session_score,
+    latest.overall_session_score,
     false
   );
 
@@ -368,8 +629,8 @@ export async function getSessionTrends({ userId, limit = 5 }) {
     fillerChange,
     "filler-word rate"
   )}, ${formatImprovement(stressChange, "average stress")}, ${formatImprovement(
-    engagementChange,
-    "engagement"
+    scoreChange,
+    "overall score"
   )}.${weakSummary}`;
 
   return {
@@ -379,10 +640,11 @@ export async function getSessionTrends({ userId, limit = 5 }) {
     metrics: {
       fillerWordImprovementPercent: fillerChange,
       stressImprovementPercent: stressChange,
-      engagementImprovementPercent: engagementChange,
+      scoreImprovementPercent: scoreChange,
       mostRepeatedWeakQuestionType: mostRepeatedWeak,
       mostRepeatedWeakCount: maxCount,
     },
+    rollingAverages: rolling,
     recentSessions: sessions,
   };
 }
