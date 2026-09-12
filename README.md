@@ -1,7 +1,7 @@
 # Callback — Interview & Productivity Coach
 
 **Event:** HackRice · **Track:** Work & Productivity
-**Sponsor tracks targeted:** Best Use of ElevenLabs · Best Use of Presage · Best Use of Vultr · Best Use of Tiger Data · Best Use of Backboard
+**Sponsor tracks targeted:** Best Use of ElevenLabs · Best Use of Presage · Best Use of Vultr · Best Use of Tiger Data · Best Use of Backboard · Best Use of Gemini API · Best Domain Name from GoDaddy Registry 
 
 ---
 
