@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { SmartSpectraSDK, breathingMetrics, faceMetrics, micromotionMetrics, edaMetrics } from "@smartspectra/node-sdk/renderer";
+import { SmartSpectraSDK, breathingMetrics, faceMetrics } from "@smartspectra/node-sdk/renderer";
 import { decodeMetrics } from "@smartspectra/node-sdk/messages";
 
 // Requested individually below (not via the cardioMetrics bundle) so we can
-// skip ARTERIAL_PRESSURE_TRACE (16) if needed. Note: EDA_TRACE was previously
-// skipped due to model cache issues, but is now explicitly requested to
-// capture skin conductance (stress) data as required.
+// skip ARTERIAL_PRESSURE_TRACE (16) and EDA_TRACE. Both need the SDK's
+// encrypted on-device model cache; when that model load fails partway
+// through a session, the native engine drops into a permanently broken
+// "not in a valid state" loop and silently drops every frame after that
+// point, which reads as "lost you, can't get back in frame" no matter how
+// still you hold. Pulse rate + HRV (15, 17) are the only cardio fields this
+// app actually reads, so there's no reason to request 16 at all.
 const PULSE_RATE_METRIC = 15;
 const HRV_METRIC = 17;
 
