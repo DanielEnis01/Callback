@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { SessionMeeting } from "./SessionMeeting";
 import { CalibrationSession } from "./CalibrationSession";
+import { SessionSetup } from "./SessionSetup";
 import { getBaseline } from "./baselineStore";
 
 interface DashboardProps {
@@ -128,8 +129,21 @@ const SectionCard: FC<{ title: string; children: ReactNode; className?: string; 
 
 export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
   const [view, setView] = useState<View>("dashboard");
+  const [inSessionSetup, setInSessionSetup] = useState(false);
   const [inMeeting, setInMeeting] = useState(false);
   const [inCalibration, setInCalibration] = useState(false);
+
+  // Every session starts with a quick "what are you practicing for" gate —
+  // confirm/replace the resume and paste this session's job posting —
+  // before the meeting itself opens. See SessionSetup.tsx.
+  if (inSessionSetup) {
+    return (
+      <SessionSetup
+        onStart={() => { setInSessionSetup(false); setInMeeting(true); }}
+        onCancel={() => setInSessionSetup(false)}
+      />
+    );
+  }
 
   if (inMeeting) {
     return <SessionMeeting onEnd={() => { setInMeeting(false); setView("results"); }} />;
@@ -164,7 +178,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
         </div>
 
         <button
-          onClick={() => setInMeeting(true)}
+          onClick={() => setInSessionSetup(true)}
           aria-label="Start session"
           className="mt-6 flex h-10 w-full items-center justify-center bg-white text-black rounded-none transition-opacity active:opacity-70"
         >
@@ -242,7 +256,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-8 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <div className="mx-auto max-w-5xl flex flex-col gap-6">
-              {view === "dashboard" && <OverallView onStart={() => setInMeeting(true)} onViewSessions={() => setView("sessions")} />}
+              {view === "dashboard" && <OverallView onStart={() => setInSessionSetup(true)} onViewSessions={() => setView("sessions")} />}
               {view === "results" && <ResultsView onViewSessions={() => setView("sessions")} />}
               {view === "sessions" && <SessionsView onOpen={() => setView("results")} />}
               {view === "trends" && <TrendsView />}

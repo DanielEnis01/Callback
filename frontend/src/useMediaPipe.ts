@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // ── Types ────────────────────────────────────────────────────────────
 // The @mediapipe/tasks-vision package exports these at the top level.
@@ -20,10 +20,34 @@ export interface MediaPipeData {
   torsoLeanDeg: number | null;     // forward/back lean (shoulders→hips vs vertical)
   /** Normalized distance between shoulders — proxy for camera distance. */
   shoulderDistance: number | null;
+  /** Normalized (0..1) midpoint of the shoulders — the torso-center point
+   *  posture-shift detection tracks. Null until a full pose is seen. */
+  midShoulderX: number | null;
+  midShoulderY: number | null;
 
-  // Movement / Fidget — rolling landmark displacement
-  /** Total landmark displacement per second over ~3s window. */
+  // Movement / Fidget — rolling TORSO-ONLY landmark displacement (shoulders
+  // + hips; deliberately excludes the nose/head so turning your head does
+  // not register as body movement). Expressed in shoulder-widths/sec so
+  // it's meaningful at any camera distance.
+  /** Torso movement rate over the last ~3s, in shoulder-widths/sec. */
   poseMovementRate: number | null;
+  /** True while sustained torso movement reads as active fidgeting/swaying
+   *  right now — this is the "is their body language unprofessional at
+   *  this moment" flag, distinct from the lagging shift count below. */
+  isFidgeting: boolean;
+  /** Epoch ms when isFidgeting last went true, null while settled. */
+  fidgetingSince: number | null;
+
+  // Posture shifts — a *discrete* change in where the torso sits in frame
+  // (leaning back and staying, a hard jerk/shake), not head rotation and
+  // not single-frame landmark jitter. This is a lagging COUNT — good for
+  // an end-of-session "N shifts" stat — not a live signal; use
+  // isFidgeting for "are they currently swaying/fidgeting". See the
+  // POSTURE_*/FIDGET_* constants below for the exact thresholds.
+  /** Running count of discrete posture shifts detected this session. */
+  postureShiftCount: number;
+  /** True while a just-detected shift is still "fresh" (within its cooldown window) — good for a brief UI flash. */
+  postureShiftDetected: boolean;
 
   status: "loading" | "ready" | "error";
   error: string | null;
@@ -60,6 +84,72 @@ const POSE_MIN_INTERVAL_MS = 125;  // ~8 FPS
 // Gaze thresholds — intentionally generous; this is a heuristic, not eye tracking.
 const YAW_THRESHOLD_DEG = 15;
 const PITCH_THRESHOLD_DEG = 12;
+
+// ── Posture-shift thresholds ─────────────────────────────────────────
+// The old (Gemini) version compared the current frame's shoulder-tilt
+// ANGLE against a reference captured once, ever, from the first frame —
+// noisy (two points, a couple of pixels of landmark jitter swings it
+// several degrees) and the reference never adapted, so it fired
+// constantly regardless of whether the person actually moved.
+//
+// Two kinds of "posture shift" both need to count, and they look
+// different in the landmark stream:
+//   1. A FAST, LARGE movement — a jerk, a shake, a violent sway — shows
+//      up as a big jump between two consecutive pose reads (~125ms
+//      apart). This has to be checked on the RAW (unsmoothed) position,
+//      because smoothing it first is exactly what makes a quick jerk
+//      invisible: an EMA only tracks a fraction of a sudden jump each
+//      tick, so a jerk that snaps back before the smoothed value catches
+//      up never crosses any threshold. This is why the previous revision
+//      of this fix — smoothed-position drift only — stayed at zero for a
+//      genuinely violent jerk.
+//   2. A SLOW, DELIBERATE repositioning — leaning back and staying there
+//      — has no single big frame-to-frame jump, so it needs the
+//      sustained-drift-from-home check on the SMOOTHED position instead.
+// Both funnel into the same counter/cooldown so one continuous movement
+// (of either kind) counts once, not many times.
+/** EMA smoothing applied to the live torso-center position each frame —
+ *  used only for the slow/sustained-drift check, never for jerk detection. */
+const TORSO_SMOOTHING_ALPHA = 0.3;
+/** Single-tick (~125ms) raw torso displacement, as a fraction of shoulder
+ *  width, that counts as an immediate "violent" movement — a jerk, shake,
+ *  or hard sway. No sustain required; the magnitude alone is the signal. */
+const POSTURE_JERK_THRESHOLD = 0.22;
+/** How far the SMOOTHED torso center has to drift from "home", as a
+ *  fraction of shoulder width, to count as a slow/deliberate posture
+ *  change. Lower than the jerk threshold because it's already filtered
+ *  by both the EMA and the sustain requirement below. */
+const POSTURE_DRIFT_THRESHOLD = 0.28;
+/** Drift has to stay past POSTURE_DRIFT_THRESHOLD this long before it
+ *  counts, so a single misdetected frame can't register as a shift. */
+const POSTURE_SHIFT_SUSTAIN_MS = 400;
+/** Minimum gap between counted shifts, so one continuous sway/lean/shake
+ *  registers once instead of repeatedly while it's happening. */
+const POSTURE_SHIFT_COOLDOWN_MS = 1500;
+/** Slow EMA that lets "home" follow gradual, sub-threshold repositioning
+ *  (settling into a chair over minutes) so a long session doesn't end up
+ *  permanently "drifted" relative to a stale reference. Deliberately much
+ *  slower than TORSO_SMOOTHING_ALPHA so a genuine sudden shift is still
+ *  caught before home catches up to it. */
+const POSTURE_HOME_DRIFT_ALPHA = 0.015;
+
+// ── Fidgeting / restlessness (continuous, not a counted event) ───────
+// postureShiftCount above answers "how many times did they noticeably
+// change position" — a lagging tally, good for an end-of-session stat.
+// It does NOT answer "are they swaying/fidgeting RIGHT NOW", because
+// swaying is oscillatory: it moves away from home and back, repeatedly,
+// often without ever sitting still long enough (or displacing far
+// enough in one shot) to cross the shift thresholds. The signal that
+// actually is continuous, on-the-fly restlessness is activity LEVEL:
+// poseMovementRate (torso-only landmark displacement, ~3s smoothed),
+// expressed as shoulder-widths of movement per second. An adaptive,
+// self-calibrating floor was tried first but overcomplicated it — a
+// fixed cutoff, picked from watching the live numbers, does the job.
+/** Rate (shoulder-widths/sec) at/above which we call it fidgeting. */
+const FIDGET_ON_THRESHOLD = 1.0;
+/** Must drop back under this (lower than the on-threshold) before we
+ *  call it settled again — the gap is what prevents flicker. */
+const FIDGET_OFF_THRESHOLD = 0.8;
 
 // We host the WASM and models locally so we don't rely on CDNs which
 // might be blocked by ad-blockers or security policies, causing Event(error).
@@ -140,7 +230,9 @@ const DEFAULT: MediaPipeData = {
   headYaw: null, headPitch: null, headRoll: null,
   lookingAtCamera: true, lookingAwaySince: null,
   shoulderTiltDeg: null, torsoLeanDeg: null, shoulderDistance: null,
-  poseMovementRate: null,
+  midShoulderX: null, midShoulderY: null,
+  poseMovementRate: null, isFidgeting: false, fidgetingSince: null,
+  postureShiftCount: 0, postureShiftDetected: false,
   status: "loading", error: null,
 };
 
@@ -181,7 +273,7 @@ export function buildMediaPipeBaseline(samples: MediaPipeSample[]): MediaPipeBas
  */
 export function useMediaPipe(
   active: boolean,
-  videoRef: React.RefObject<HTMLVideoElement>,
+  videoRef: React.RefObject<HTMLVideoElement | null>,
   collectSamples = false,
 ) {
   const [data, setData] = useState<MediaPipeData>(DEFAULT);
@@ -213,8 +305,18 @@ export function useMediaPipe(
     let lookingAwayStart: number | null = null;
     const video = videoRef.current;
 
-    // Ring buffer for fidget detection.
+    // Ring buffer for fidget/movement-rate detection (torso landmarks only).
     const movementBuf: number[] = [];
+
+    // Posture-shift state — see the POSTURE_* constants for what these mean.
+    let rawTorsoPrev: { x: number; y: number } | null = null;   // last raw reading, for jerk detection
+    let smoothedTorso: { x: number; y: number } | null = null;  // EMA, for sustained-drift detection
+    let homeTorso: { x: number; y: number } | null = null;
+    let driftExceededSince: number | null = null;
+    let lastShiftAt = 0;
+    let postureShiftCount = 0;
+
+
 
     async function init() {
       console.log("[MediaPipe] init started", { active });
@@ -312,6 +414,11 @@ export function useMediaPipe(
 
                 latest.shoulderTiltDeg = shoulderTilt(ls, rs);
                 latest.shoulderDistance = landmarkDist(ls, rs);
+                // Guarded shoulder width — used to normalize every
+                // distance-based signal below (movement rate, jerk, drift)
+                // to shoulder-widths so thresholds mean the same thing
+                // whether the person is close to or far from the camera.
+                const shoulderWidth = latest.shoulderDistance > 0.01 ? latest.shoulderDistance : 0.01;
 
                 if (pr.worldLandmarks?.length && pr.worldLandmarks[0].length >= 25) {
                   const wl = pr.worldLandmarks[0] as LandmarkXYZ[];
@@ -320,7 +427,9 @@ export function useMediaPipe(
                   latest.torsoLeanDeg = torsoLean(ls, rs, lh, rh);
                 }
 
-                const keyNow: LandmarkXYZ[] = [lm[0], ls, rs, lh, rh];
+                // Torso-only landmark set — deliberately no nose/head point,
+                // so turning your head doesn't register as body movement.
+                const keyNow: LandmarkXYZ[] = [ls, rs, lh, rh];
                 if (prevKeyLandmarks) {
                   let disp = 0;
                   for (let i = 0; i < keyNow.length; i++) {
@@ -328,12 +437,102 @@ export function useMediaPipe(
                     const dy = keyNow[i].y - prevKeyLandmarks[i].y;
                     disp += Math.sqrt(dx * dx + dy * dy);
                   }
-                  movementBuf.push(disp);
+                  movementBuf.push(disp / shoulderWidth);
                   if (movementBuf.length > MOVEMENT_BUFFER_LEN) movementBuf.shift();
                   const avgDisp = movementBuf.reduce((a, b) => a + b, 0) / movementBuf.length;
-                  latest.poseMovementRate = avgDisp * (1000 / POSE_MIN_INTERVAL_MS);
+                  // Shoulder-widths of torso movement per second.
+                  const rate = avgDisp * (1000 / POSE_MIN_INTERVAL_MS);
+                  latest.poseMovementRate = rate;
+
+                  // Fidgeting/swaying — a CONTINUOUS state, not a counted
+                  // event: hysteresis (two different thresholds) so it
+                  // doesn't flicker right at the boundary between
+                  // "settled" and "restless".
+                  const wasFidgeting = latest.isFidgeting;
+                  if (!wasFidgeting && rate >= FIDGET_ON_THRESHOLD) {
+                    latest.isFidgeting = true;
+                    latest.fidgetingSince = now;
+                  } else if (wasFidgeting && rate < FIDGET_OFF_THRESHOLD) {
+                    latest.isFidgeting = false;
+                    latest.fidgetingSince = null;
+                  }
                 }
                 prevKeyLandmarks = keyNow.map((l) => ({ x: l.x, y: l.y, z: l.z }));
+
+                // ── Posture-shift detection ──────────────────────
+                // Track the torso center (midpoint of shoulders+hips) in
+                // normalized frame coordinates. Two independent checks feed
+                // the same counter/cooldown — see the POSTURE_* constants
+                // up top for why both exist: a smoothed "did you drift and
+                // stay" check alone misses fast jerks/shakes, because
+                // smoothing a sudden snap-and-return never lets the
+                // smoothed value catch up far enough to cross a threshold.
+                const torsoNow = {
+                  x: (ls.x + rs.x + lh.x + rh.x) / 4,
+                  y: (ls.y + rs.y + lh.y + rh.y) / 4,
+                };
+                latest.midShoulderX = (ls.x + rs.x) / 2;
+                latest.midShoulderY = (ls.y + rs.y) / 2;
+
+                const offCooldown = now - lastShiftAt >= POSTURE_SHIFT_COOLDOWN_MS;
+                let shiftNow = false;
+
+                // 1) Jerk check — raw, unsmoothed frame-to-frame jump. Big
+                //    enough on its own, no sustain needed: a violent shake
+                //    is unambiguous the instant it happens.
+                if (rawTorsoPrev) {
+                  const jdx = torsoNow.x - rawTorsoPrev.x;
+                  const jdy = torsoNow.y - rawTorsoPrev.y;
+                  const jerkRatio = Math.sqrt(jdx * jdx + jdy * jdy) / shoulderWidth;
+                  if (jerkRatio > POSTURE_JERK_THRESHOLD && offCooldown) {
+                    shiftNow = true;
+                  }
+                }
+                rawTorsoPrev = torsoNow;
+
+                // 2) Sustained-drift check — smoothed position vs. "home",
+                //    for slower, deliberate repositioning that never
+                //    produces one big single-frame jump.
+                smoothedTorso = smoothedTorso
+                  ? {
+                      x: smoothedTorso.x + (torsoNow.x - smoothedTorso.x) * TORSO_SMOOTHING_ALPHA,
+                      y: smoothedTorso.y + (torsoNow.y - smoothedTorso.y) * TORSO_SMOOTHING_ALPHA,
+                    }
+                  : { ...torsoNow };
+                if (!homeTorso) homeTorso = { ...smoothedTorso };
+
+                const driftDx = smoothedTorso.x - homeTorso.x;
+                const driftDy = smoothedTorso.y - homeTorso.y;
+                const driftRatio = Math.sqrt(driftDx * driftDx + driftDy * driftDy) / shoulderWidth;
+
+                if (driftRatio > POSTURE_DRIFT_THRESHOLD) {
+                  if (driftExceededSince == null) driftExceededSince = now;
+                  if (now - driftExceededSince >= POSTURE_SHIFT_SUSTAIN_MS && offCooldown) {
+                    shiftNow = true;
+                  }
+                } else {
+                  driftExceededSince = null;
+                  // Let "home" slowly follow gradual, sub-threshold
+                  // repositioning (e.g. settling into a chair) so a long
+                  // session doesn't stay permanently "drifted" against a
+                  // stale reference. Much slower than the smoothing above,
+                  // so a real sudden shift is still caught first.
+                  homeTorso = {
+                    x: homeTorso.x + driftDx * POSTURE_HOME_DRIFT_ALPHA,
+                    y: homeTorso.y + driftDy * POSTURE_HOME_DRIFT_ALPHA,
+                  };
+                }
+
+                if (shiftNow) {
+                  postureShiftCount++;
+                  lastShiftAt = now;
+                  // Wherever they ended up becomes the new "home" so
+                  // holding the new pose doesn't keep re-triggering.
+                  homeTorso = { ...smoothedTorso };
+                  driftExceededSince = null;
+                }
+                latest.postureShiftCount = postureShiftCount;
+                latest.postureShiftDetected = lastShiftAt > 0 && now - lastShiftAt < POSTURE_SHIFT_COOLDOWN_MS;
               } else {
                  // console.log("[MediaPipe] No pose detected in this frame");
               }
@@ -379,7 +578,7 @@ export function useMediaPipe(
         setData({
           ...DEFAULT,
           status: "error",
-          errorMsg: errorString,
+          error: errorString,
         });
       }
     }

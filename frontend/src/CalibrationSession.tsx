@@ -76,7 +76,6 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   const [brightness, setBrightness] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [targetRoles, setTargetRoles] = useState("");
-  const [jobPosting, setJobPosting] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [draggingResume, setDraggingResume] = useState(false);
@@ -286,7 +285,6 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               saveInterviewProfile({
                 name: name.trim(),
                 targetRoles: targetRoles.trim(),
-                jobPosting: jobPosting.trim() || null,
                 resume: { name: resumeFile.name, size: resumeFile.size },
               });
               setPhase("checking");
@@ -298,7 +296,8 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
                 Personalize your interview prep.
               </h1>
               <p className="mt-2 max-w-xl text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
-                Tell us what you&apos;re targeting so future practice questions can be shaped around your background and roles.
+                Tell us who you are and share your resume so future practice questions can be shaped around your
+                background. You&apos;ll add a job posting each time you start a session.
               </p>
             </div>
 
@@ -366,17 +365,6 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               </button>
               {resumeError && <span className="text-[12px] text-red-300">{resumeError}</span>}
             </div>
-
-            <label className="flex flex-col gap-2">
-              <span className="text-[13px] text-white/80">Job posting <span className="text-white/40">Optional</span></span>
-              <textarea
-                value={jobPosting}
-                onChange={(event) => setJobPosting(event.target.value)}
-                rows={6}
-                placeholder="Paste a job description here to tailor future questions even more closely."
-                className="resize-y border border-white/20 bg-transparent px-3 py-3 text-[14px] leading-relaxed text-white outline-none placeholder:text-white/25 focus:border-white/60"
-              />
-            </label>
 
             <div className="flex items-center justify-between gap-3 pt-1">
               <button

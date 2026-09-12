@@ -4,7 +4,6 @@ import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
-import { getBaseline } from "./baselineStore";
 
 interface SessionMeetingProps {
   onEnd: () => void;
@@ -16,51 +15,26 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const [aiSpeaking, setAiSpeaking] = useState(true);
   const [minimized, setMinimized] = useState(false);
 
-  const baseline = getBaseline();
-
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaPipe = useMediaPipe(!camOff, videoRef);
 
   const statsRef = useRef({
-    totalFrames: 0,
-    lookingFrames: 0, // Used for historical total
-    postureShiftCount: 0,
-    lastShiftTime: 0,
-    fallbackTilt: null as number | null,
     // Sliding window of the last 60 frames (~15 seconds at 4fps)
     recentLookHistory: [] as boolean[],
   });
 
-  // Calculate eye contact percentage and posture shifts based on MediaPipe stream
+  // Eye contact — posture shifts/fidgeting are now tracked inside
+  // useMediaPipe itself (see POSTURE_*/FIDGET_* constants there), so this
+  // effect only has to track the eye-contact rolling window.
   useEffect(() => {
     if (mediaPipe.status !== "ready") return;
 
-    statsRef.current.totalFrames++;
-    
     // Maintain a sliding window of the last ~15 seconds of eye contact
     statsRef.current.recentLookHistory.push(mediaPipe.lookingAtCamera);
     if (statsRef.current.recentLookHistory.length > 60) {
       statsRef.current.recentLookHistory.shift();
     }
-
-    // Set fallback baseline if real baseline is missing
-    if (statsRef.current.fallbackTilt === null && mediaPipe.shoulderTiltDeg != null) {
-      statsRef.current.fallbackTilt = mediaPipe.shoulderTiltDeg;
-    }
-
-    // Posture shift detection
-    const referenceTilt = baseline?.mediaPipe?.neutralShoulderTilt ?? statsRef.current.fallbackTilt;
-    if (referenceTilt != null && mediaPipe.shoulderTiltDeg != null) {
-      const tiltDiff = Math.abs(mediaPipe.shoulderTiltDeg - referenceTilt);
-      const now = Date.now();
-      
-      // Debounce shifts by 2 seconds
-      if (tiltDiff > 5 && now - statsRef.current.lastShiftTime > 2000) {
-        statsRef.current.postureShiftCount++;
-        statsRef.current.lastShiftTime = now;
-      }
-    }
-  }, [mediaPipe, baseline]);
+  }, [mediaPipe]);
 
   const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff);
 
@@ -91,7 +65,14 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
     { label: "Emotion", value: emotion ?? pending },
     { label: "Pulse", value: pulseBpm ? `${pulseBpm} bpm` : pending },
     { label: "Eye Contact", value: `${eyeContactPct}%` },
-    { label: "Posture Shifts", value: statsRef.current.postureShiftCount.toString() },
+    {
+      label: "Posture",
+      value: mediaPipe.isFidgeting
+        ? "Fidgeting"
+        : mediaPipe.postureShiftCount > 0
+          ? `Steady (${mediaPipe.postureShiftCount})`
+          : "Steady",
+    },
     { label: "Stress", value: stress ?? pending },
   ];
 
@@ -136,18 +117,6 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
               {error && <span className="text-[11px] normal-case text-white/35 max-w-sm">{error}</span>}
             </div>
           )}
-          
-          <div className="absolute top-0 right-0 bg-black/80 text-white text-[10px] p-2 pointer-events-none z-50 flex flex-col gap-1 max-w-[150px] font-mono">
-            <div>status: {mediaPipe.status}</div>
-            {mediaPipe.errorMsg && <div className="text-red-400">err: {mediaPipe.errorMsg}</div>}
-            <div>yaw: {mediaPipe.headYaw?.toFixed(2) ?? 'null'}</div>
-            <div>pitch: {mediaPipe.headPitch?.toFixed(2) ?? 'null'}</div>
-            <div>tilt: {mediaPipe.shoulderTiltDeg?.toFixed(2) ?? 'null'}</div>
-            <div>look: {mediaPipe.lookingAtCamera ? 'yes' : 'no'}</div>
-            <div>base: {baseline?.mediaPipe?.neutralShoulderTilt?.toFixed(2) ?? 'null'}</div>
-            <div>frames: {statsRef.current.totalFrames}</div>
-          </div>
-
           <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">You</span>
           {!camOff && (
             <span className="absolute top-3 left-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-white/45">
