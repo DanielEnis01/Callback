@@ -1,6 +1,20 @@
 export type MetricValues = Record<string, number | string | Record<string, number>>;
 type Writer = (path: string, body: unknown, method?: string) => Promise<unknown>;
 
+/** Per-session context captured at Session Setup, carried through to the
+ * /sessions row this recorder creates -- see SessionSetup.tsx's
+ * SessionContext (jobPosting/targetWeakness) and Dashboard.tsx's
+ * pendingTargetWeakness ("Practice this"). Everything here is optional so
+ * existing callers (and static/no-context sessions) keep working. */
+export interface SessionCreateContext {
+  /** Always "interview" -- focus mode was removed. Still sent because
+   * sessions.session_type is NOT NULL with a CHECK constraint. */
+  sessionType?: "interview";
+  targetedWeakness?: string;
+  jobPostingText?: string;
+  jobPostingId?: string;
+}
+
 /** Ordered, retryable writes. IDs/timestamps survive retries after lost responses. */
 export class SessionRecorder {
   readonly id = crypto.randomUUID();
@@ -10,7 +24,7 @@ export class SessionRecorder {
   private inFlight: Promise<void> | null = null;
   private endedAt: string | null = null;
   private lastTimestamp = 0;
-  constructor(private write: Writer) {}
+  constructor(private write: Writer, private context: SessionCreateContext = {}) {}
   get pending() { return this.queue.length; }
   enqueue(metrics: MetricValues) {
     if (!Object.keys(metrics).length) return;
@@ -25,7 +39,15 @@ export class SessionRecorder {
   }
   private async drain() {
     if (!this.created) {
-      await this.write('/sessions', { session_id: this.id, session_type: 'interview', started_at: this.startedAt });
+      const { sessionType = 'interview', targetedWeakness, jobPostingText, jobPostingId } = this.context;
+      await this.write('/sessions', {
+        session_id: this.id,
+        session_type: sessionType,
+        started_at: this.startedAt,
+        ...(targetedWeakness ? { targeted_weakness: targetedWeakness } : {}),
+        ...(jobPostingText ? { job_posting_text: jobPostingText } : {}),
+        ...(jobPostingId ? { job_posting_id: jobPostingId } : {}),
+      });
       this.created = true;
     }
     while (this.queue.length) {

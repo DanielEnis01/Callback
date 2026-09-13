@@ -8,9 +8,11 @@
     "start": "node src/index.js",
     "test:pdf": "node scripts/test-pdf-upload.js",
     "test": "node --test test/*.test.js",
-    "db:init": "node scripts/init-db.js"
+    "db:init": "node scripts/init-db.js",
+    "gemini:check": "node scripts/check-gemini-models.js"
   },
   "dependencies": {
+    "@google/genai": "^2.22.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

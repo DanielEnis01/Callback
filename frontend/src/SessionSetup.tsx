@@ -5,6 +5,12 @@ import { getInterviewProfile, saveSessionContext, type InterviewProfile } from "
 interface SessionSetupProps {
   onStart: () => void;
   onCancel: () => void;
+  /** Pre-fills the weakness picker below -- set when this gate was opened via
+   * a "Practice this" click on the Results dashboard (see Dashboard.tsx's
+   * pendingTargetWeakness). May be free text from an AI-identified weakness
+   * that isn't one of MOCK_WEAKNESSES, so it's injected as an extra option
+   * rather than requiring an exact match against the mock list. */
+  initialWeakness?: string | null;
 }
 
 /**
@@ -41,7 +47,7 @@ const MOCK_WEAKNESSES = [
   "Trailing off / low vocal energy",
 ];
 
-export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
+export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel, initialWeakness }) => {
   // getInterviewProfile() is async (it may hit the Tiger Data backend
   // instead of localStorage — see baselineStore.ts), so load it once on
   // mount rather than reading it synchronously.
@@ -60,7 +66,12 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [draggingResume, setDraggingResume] = useState(false);
   const [jobPosting, setJobPosting] = useState("");
-  const [selectedWeakness, setSelectedWeakness] = useState("");
+  const [selectedWeakness, setSelectedWeakness] = useState(initialWeakness || "");
+  // Custom weaknesses (e.g. Gemini-identified, not in MOCK_WEAKNESSES) are
+  // still selectable -- injected as a one-off extra option below.
+  const weaknessOptions = selectedWeakness && !MOCK_WEAKNESSES.includes(selectedWeakness)
+    ? [selectedWeakness, ...MOCK_WEAKNESSES]
+    : MOCK_WEAKNESSES;
   const resumeInputRef = useRef<HTMLInputElement>(null);
 
   const selectResume = (file: File | undefined) => {
@@ -194,7 +205,9 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
           <label className="flex flex-col gap-2">
             <span className="flex items-center gap-2 text-[13px] text-white/80">
               <Target className="h-3.5 w-3.5" strokeWidth={1.6} /> Specific weakness to target{" "}
-              <span className="text-white/40">Optional · pick one so the session stays focused</span>
+              <span className="text-white/40">
+                {initialWeakness ? "Pre-filled from \"Practice this\" · change it if you'd rather focus elsewhere" : "Optional · pick one so the session stays focused"}
+              </span>
             </span>
             <select
               value={selectedWeakness}
@@ -202,7 +215,7 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
               className="border border-white/20 bg-black px-3 py-2.5 text-[14px] text-white outline-none focus:border-white/60"
             >
               <option value="">No specific weakness — general practice</option>
-              {MOCK_WEAKNESSES.map((weakness) => (
+              {weaknessOptions.map((weakness) => (
                 <option key={weakness} value={weakness}>
                   {weakness}
                 </option>

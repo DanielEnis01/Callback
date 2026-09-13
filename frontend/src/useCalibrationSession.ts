@@ -126,7 +126,15 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
     try {
       sdk = new SmartSpectraSDK({
         apiKey,
-        requestedMetrics: [...breathingMetrics, PULSE_RATE_METRIC, HRV_METRIC, ...faceMetrics],
+        // HRV_METRIC dropped: it needs SmartSpectra's on-device physiology-inference
+        // model, which is failing to load in this environment ("Unable to resolve
+        // configured model path" at startup) and permanently wedges the native
+        // engine (endless "not in a valid state" frame drops) once requested.
+        // Pulse rate + breathing don't need that model, per the SDK's own
+        // fallback guidance. Re-add HRV_METRIC once the model-load issue
+        // (network/firewall or API key/quota — see SmartSpectra's dashboard) is
+        // resolved.
+        requestedMetrics: [...breathingMetrics, PULSE_RATE_METRIC, ...faceMetrics],
       });
     } catch (err) {
       console.error("Failed to construct SmartSpectraSDK for calibration:", err);

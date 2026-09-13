@@ -81,9 +81,20 @@ export interface MediaPipeBaseline {
 const FACE_MIN_INTERVAL_MS = 83;   // ~12 FPS
 const POSE_MIN_INTERVAL_MS = 125;  // ~8 FPS
 
-// Gaze thresholds — intentionally generous; this is a heuristic, not eye tracking.
-const YAW_THRESHOLD_DEG = 15;
-const PITCH_THRESHOLD_DEG = 12;
+// Gaze thresholds — a heuristic on head pose, not real eye tracking.
+//
+// These were originally set generously (15/12) because they only drove a
+// live UI badge, where false "looking away" flashes are annoying. They now
+// also feed the recorded Eye Contact trait, and at those angles a session
+// spent deliberately looking off-camera still scored 9.2/10 — a person
+// reading a second screen or their own preview window typically sits around
+// 10-20 degrees off axis, inside the old yaw window. Tightened to roughly
+// where a viewer stops reading it as "looking at me".
+//
+// This is the tuning knob for that trait: raise these to be more forgiving,
+// lower them to be stricter.
+const YAW_THRESHOLD_DEG = 10;
+const PITCH_THRESHOLD_DEG = 8;
 
 // ── Posture-shift thresholds ─────────────────────────────────────────
 // The old (Gemini) version compared the current frame's shoulder-tilt
@@ -114,18 +125,18 @@ const TORSO_SMOOTHING_ALPHA = 0.3;
 /** Single-tick (~125ms) raw torso displacement, as a fraction of shoulder
  *  width, that counts as an immediate "violent" movement — a jerk, shake,
  *  or hard sway. No sustain required; the magnitude alone is the signal. */
-const POSTURE_JERK_THRESHOLD = 0.22;
+const POSTURE_JERK_THRESHOLD = 0.45;
 /** How far the SMOOTHED torso center has to drift from "home", as a
  *  fraction of shoulder width, to count as a slow/deliberate posture
  *  change. Lower than the jerk threshold because it's already filtered
  *  by both the EMA and the sustain requirement below. */
-const POSTURE_DRIFT_THRESHOLD = 0.28;
+const POSTURE_DRIFT_THRESHOLD = 0.50;
 /** Drift has to stay past POSTURE_DRIFT_THRESHOLD this long before it
  *  counts, so a single misdetected frame can't register as a shift. */
-const POSTURE_SHIFT_SUSTAIN_MS = 400;
+const POSTURE_SHIFT_SUSTAIN_MS = 800;
 /** Minimum gap between counted shifts, so one continuous sway/lean/shake
  *  registers once instead of repeatedly while it's happening. */
-const POSTURE_SHIFT_COOLDOWN_MS = 1500;
+const POSTURE_SHIFT_COOLDOWN_MS = 3000;
 /** Slow EMA that lets "home" follow gradual, sub-threshold repositioning
  *  (settling into a chair over minutes) so a long session doesn't end up
  *  permanently "drifted" relative to a stale reference. Deliberately much
@@ -146,10 +157,10 @@ const POSTURE_HOME_DRIFT_ALPHA = 0.015;
 // self-calibrating floor was tried first but overcomplicated it — a
 // fixed cutoff, picked from watching the live numbers, does the job.
 /** Rate (shoulder-widths/sec) at/above which we call it fidgeting. */
-const FIDGET_ON_THRESHOLD = 1.0;
+const FIDGET_ON_THRESHOLD = 1.5;
 /** Must drop back under this (lower than the on-threshold) before we
  *  call it settled again — the gap is what prevents flicker. */
-const FIDGET_OFF_THRESHOLD = 0.8;
+const FIDGET_OFF_THRESHOLD = 1.2;
 
 // We host the WASM and models locally so we don't rely on CDNs which
 // might be blocked by ad-blockers or security policies, causing Event(error).

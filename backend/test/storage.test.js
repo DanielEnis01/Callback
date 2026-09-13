@@ -113,6 +113,17 @@ test('job postings link to retrievable PDFs and retain structured fields', async
   assert.equal(jobs.body.records[0].company, 'Example');
   await assert.rejects(db.query('INSERT INTO resumes(user_id, document_id, filename) VALUES ($1, $2, $3)', ['legacy-user', response.body.document_id, 'stolen.pdf']), { code: '23503' });
 });
+test('deletes a PDF, cascading to its resume row, and enforces ownership', async () => {
+  const response = await upload(original, 'to-delete.pdf').expect(201);
+  const documentId = response.body.document_id;
+  await auth(request(app).delete(`/api/documents/pdfs/${documentId}`), 'bob').expect(404);
+  await auth(request(app).delete(`/api/documents/pdfs/${documentId}`)).expect(204);
+  await auth(request(app).get(`/api/documents/pdfs/${documentId}`)).expect(404);
+  const resumes = await auth(request(app).get('/api/data/resumes')).expect(200);
+  assert.ok(!resumes.body.records.some(r => r.document_id === documentId));
+  await auth(request(app).delete(`/api/documents/pdfs/${documentId}`)).expect(404);
+  await auth(request(app).delete('/api/documents/pdfs/not-a-uuid')).expect(400);
+});
 test('persists and retrieves baselines, sessions, JSON metrics and computed session counts', async () => {
   const baseline = await auth(request(app).post('/api/data/baselines')).send({ baseline_pulse: 65, baseline_stress_index: 20 }).expect(201);
   assert.equal(baseline.body.baseline_pulse, 65);
@@ -136,6 +147,50 @@ test('persists and retrieves baselines, sessions, JSON metrics and computed sess
   await auth(request(app).post('/api/data/baselines')).send({ user_id: 'bob', baseline_pulse: 55 }).expect(400);
   await auth(request(app).post('/api/data/baselines')).send({ baseline_pulse: '65' }).expect(400);
   await auth(request(app).post('/api/data/session-metrics')).send({ ...metric, overall_session_score: 11 }).expect(400);
+});
+test('saves and reads back an interview profile, including the calibration flow that omits jobPosting entirely', async () => {
+  // CalibrationSession.tsx never sends a jobPosting key at all (it's set
+  // per-session, not at calibration time) -- that omission must be treated
+  // like null, not rejected as invalid.
+  const saved = await auth(request(app).patch('/api/data/profile')).send({
+    name: 'Daniel Enis', targetRoles: 'Software Engineer', resume: { name: 'resume.pdf', size: 1200 },
+  }).expect(200);
+  assert.equal(saved.body.name, 'Daniel Enis');
+  const fetched = await auth(request(app).get('/api/data/interview-profile')).expect(200);
+  assert.deepEqual(fetched.body, saved.body);
+  await auth(request(app).patch('/api/data/profile')).send({
+    name: 'Daniel Enis', targetRoles: 'Software Engineer', jobPosting: null, resume: { name: 'resume.pdf', size: 1200 },
+  }).expect(200);
+  await auth(request(app).patch('/api/data/profile')).send({ name: 'Daniel Enis' }).expect(400);
+  await auth(request(app).patch('/api/data/profile')).send({
+    name: 'Daniel Enis', targetRoles: 'Software Engineer', jobPosting: 5, resume: { name: 'resume.pdf', size: 1200 },
+  }).expect(400);
+});
+test('analyzes a session against baseline and recent-session trend, stores the result, and lists it', async () => {
+  await auth(request(app).post('/api/data/baselines')).send({ baseline_pulse: 60, baseline_stress_index: 20 }).expect(201);
+  const first = await auth(request(app).post('/api/data/sessions')).send({ session_type: 'focus', started_at: '2026-09-12T13:00:00Z' }).expect(201);
+  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: first.body.session_id, recorded_at: '2026-09-12T13:00:10Z', pulse_rate: 90, stress_index_baevsky: 40 }).expect(201);
+  const firstAnalysis = await auth(request(app).post(`/api/data/sessions/${first.body.session_id}/analyze`)).expect(200);
+  assert.equal(firstAnalysis.body.signal_averages.pulse_rate, 90);
+  assert.equal(firstAnalysis.body.baseline_deltas.pulse_rate.direction, 'worse');
+  assert.ok(firstAnalysis.body.weaknesses.some(w => w.signal === 'pulse_rate'));
+  assert.equal(firstAnalysis.body.overall_score, 0);
+
+  const second = await auth(request(app).post('/api/data/sessions')).send({ session_type: 'focus', started_at: '2026-09-12T14:00:00Z' }).expect(201);
+  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: second.body.session_id, recorded_at: '2026-09-12T14:00:10Z', pulse_rate: 50, stress_index_baevsky: 18 }).expect(201);
+  const secondAnalysis = await auth(request(app).post(`/api/data/sessions/${second.body.session_id}/analyze`)).expect(200);
+  assert.equal(secondAnalysis.body.baseline_deltas.pulse_rate.direction, 'better');
+  assert.equal(secondAnalysis.body.trend.pulse_rate.direction, 'better'); // improved vs the first session's average of 90
+  assert.equal(secondAnalysis.body.overall_score, 100);
+
+  // Recomputing replaces the row instead of duplicating it.
+  await auth(request(app).post(`/api/data/sessions/${second.body.session_id}/analyze`)).expect(200);
+  const list = await auth(request(app).get('/api/data/session-results')).expect(200);
+  assert.equal(list.body.records.length, 2);
+  assert.equal(list.body.records[0].session_id, second.body.session_id);
+
+  await auth(request(app).post(`/api/data/sessions/${crypto.randomUUID()}/analyze`)).expect(404);
+  await auth(request(app).get('/api/data/session-results'), 'bob').expect(200).expect(res => assert.deepEqual(res.body.records, []));
 });
 test('rolls back PDF insertion if related resume insertion fails', async () => {
   await db.query("ALTER TABLE resumes ADD CONSTRAINT test_reject_filename CHECK(filename <> 'rollback.pdf')");

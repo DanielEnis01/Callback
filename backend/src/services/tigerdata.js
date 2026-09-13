@@ -34,6 +34,28 @@ export async function initTigerData(db = tigerDb, { timescale = process.env.TIGE
     await client.query('ROLLBACK');
     throw error;
   } finally { client.release(); }
+  // Continuous aggregates need TimescaleDB's background-worker features
+  // (not guaranteed on every Tiger Data plan) and creating one can't
+  // reliably run inside a transaction block, so this runs separately and
+  // is tolerated as best-effort -- analytics.js falls back to querying
+  // session_metrics directly for long-range trends if this never lands.
+  if (timescale) {
+    try {
+      await db.query(fs.readFileSync(new URL('../../sql/continuous_aggregates.sql', import.meta.url), 'utf8'));
+    } catch (error) {
+      console.warn('Continuous aggregate setup skipped (long-range trends will fall back to plain queries):', error.message);
+    }
+    // Separate call, deliberately not concatenated with anything else above:
+    // node-postgres sends a multi-statement query string as a single simple-
+    // query message, which Postgres runs as one implicit transaction --
+    // and refresh_continuous_aggregate() refuses to run inside any
+    // transaction block. Safe to call on every startup; a no-op once caught up.
+    try {
+      await db.query(`CALL refresh_continuous_aggregate('session_metrics_daily', NULL, NULL)`);
+    } catch (error) {
+      console.warn('Continuous aggregate refresh skipped:', error.message);
+    }
+  }
 }
 
 export async function validatePdf(filename, bytes) {
@@ -88,6 +110,13 @@ export function createDocumentStore(db = tigerDb) {
       const row = result.rows[0];
       return { ...row, pdf_data: Buffer.from(row.pdf_data) };
     },
+    // Cascades to the resumes/job_postings row pointing at it (see the
+    // ON DELETE CASCADE foreign keys in sql/tigerdata.sql) -- no separate
+    // cleanup needed here.
+    async deletePdfDocument({ documentId, userId }) {
+      const result = await db.query('DELETE FROM pdf_documents WHERE document_id = $1 AND user_id = $2 RETURNING document_id', [documentId, userId]);
+      return Boolean(result.rows[0]);
+    },
   };
 }
-export const { storePdfDocument, listPdfDocuments, getPdfDocument } = createDocumentStore();
+export const { storePdfDocument, listPdfDocuments, getPdfDocument, deletePdfDocument } = createDocumentStore();

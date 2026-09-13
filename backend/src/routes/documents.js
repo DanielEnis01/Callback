@@ -43,6 +43,11 @@ export function createDocumentsRouter(db) {
     const page = pagination(req.query);
     res.json({ documents: await store.listPdfDocuments({ userId: req.user.userId, ...page }), ...page });
   }));
+  router.delete('/pdfs/:documentId', asyncRoute(async (req, res) => {
+    const deleted = await store.deletePdfDocument({ documentId: requireUuid(req.params.documentId), userId: req.user.userId });
+    if (!deleted) throw new HttpError(404, 'PDF not found.');
+    res.status(204).end();
+  }));
   router.get('/pdfs/:documentId', asyncRoute(async (req, res) => {
     const document = await store.getPdfDocument({ documentId: requireUuid(req.params.documentId), userId: req.user.userId });
     if (!document) throw new HttpError(404, 'PDF not found.');
