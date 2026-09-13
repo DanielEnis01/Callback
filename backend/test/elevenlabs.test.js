@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Readable } from "node:stream";
 
 process.env.ELEVENLABS_API_KEY = "test-key";
 process.env.ELEVENLABS_VOICE_ID = "voice-123";
@@ -12,45 +13,45 @@ test.afterEach(() => {
 
 const { synthesizeSpeech } = await import("../src/services/elevenlabs.js");
 
-test("synthesizeSpeech posts text to the ElevenLabs API and returns audio bytes", async () => {
+test("synthesizeSpeech posts text to the ElevenLabs streaming API and returns audio", async () => {
   let captured;
   global.fetch = async (url, options) => {
     captured = { url, options };
-    return {
-      ok: true,
-      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
-    };
+    return new Response(new Uint8Array([1, 2, 3]));
   };
 
   const result = await synthesizeSpeech({ text: "Hello there", voiceId: "voice-123" });
 
-  assert.ok(Buffer.isBuffer(result));
-  assert.deepEqual(Array.from(result), [1, 2, 3]);
-  assert.equal(captured.url, "https://api.elevenlabs.io/v1/text-to-speech/voice-123");
+  assert.ok(result instanceof Readable);
+  const chunks = [];
+  for await (const chunk of result) chunks.push(chunk);
+  assert.deepEqual(Array.from(Buffer.concat(chunks)), [1, 2, 3]);
+  assert.equal(captured.url, "https://api.elevenlabs.io/v1/text-to-speech/voice-123/stream");
   assert.equal(captured.options.method, "POST");
   assert.equal(captured.options.headers["xi-api-key"], "test-key");
 
   const body = JSON.parse(captured.options.body);
   assert.equal(body.text, "Hello there");
-  assert.equal(body.model_id, "eleven_multilingual_v2");
+  assert.equal(body.model_id, "eleven_turbo_v2_5");
   assert.deepEqual(body.voice_settings, {
-    stability: 0.5,
+    stability: 0.45,
     similarity_boost: 0.75,
+    style: 0.0,
+    use_speaker_boost: true,
   });
 });
 
-test("synthesizeSpeech supports the legacy ELEVEN_LABS_API_KEY env name", async () => {
-  delete process.env.ELEVENLABS_API_KEY;
-  process.env.ELEVEN_LABS_API_KEY = "legacy-key";
-  global.fetch = async (_url, options) => {
-    assert.equal(options.headers["xi-api-key"], "legacy-key");
-    return { ok: true, arrayBuffer: async () => new Uint8Array([9]).buffer };
+test("synthesizeSpeech uses the configured voice when no override is passed", async () => {
+  global.fetch = async (url, options) => {
+    assert.equal(url, "https://api.elevenlabs.io/v1/text-to-speech/voice-123/stream");
+    assert.equal(options.headers["xi-api-key"], "test-key");
+    return new Response(new Uint8Array([9]));
   };
 
-  const result = await synthesizeSpeech({ text: "legacy", voiceId: "voice-123" });
-  assert.deepEqual(Array.from(result), [9]);
-  delete process.env.ELEVEN_LABS_API_KEY;
-  process.env.ELEVENLABS_API_KEY = "test-key";
+  const result = await synthesizeSpeech({ text: "Hello there" });
+  const chunks = [];
+  for await (const chunk of result) chunks.push(chunk);
+  assert.deepEqual(Array.from(Buffer.concat(chunks)), [9]);
 });
 
 test("synthesizeSpeech rejects missing config", async () => {
