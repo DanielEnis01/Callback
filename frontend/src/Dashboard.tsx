@@ -40,7 +40,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-type View = "dashboard" | "results" | "sessions" | "trends" | "settings" | "calibration";
+type View = "dashboard" | "results" | "sessions" | "trends" | "settings";
 type NavItem = { id: View; title: string; icon: ElementType };
 
 const navGroups: { heading?: string; items: NavItem[] }[] = [
@@ -50,7 +50,6 @@ const navGroups: { heading?: string; items: NavItem[] }[] = [
       { id: "results", title: "Results", icon: FileBarChart },
       { id: "sessions", title: "Sessions", icon: History },
       { id: "trends", title: "Trends", icon: TrendingUp },
-      { id: "calibration", title: "Calibration", icon: SlidersHorizontal },
     ],
   },
 ];
@@ -145,9 +144,11 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
   // Require calibration before the very first session; after that, every
   // session still goes through the SessionSetup gate below (resume/job
   // posting/weakness) rather than straight into the meeting.
+  // Calibration is no longer a destination the user visits -- it is the first
+  // few seconds of every session (SessionSetup -> preflight framing check ->
+  // meeting). So starting a session always goes straight to the setup gate.
   const startSession = async () => {
-    if (await getBaseline()) setInSessionSetup(true);
-    else setInCalibration(true);
+    setInSessionSetup(true);
   };
   // "Practice this" from the Results dashboard's ranked weakness list --
   // pre-targets the next session at a specific weakness (see
@@ -164,7 +165,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
     return (
       <SessionSetup
         initialWeakness={pendingTargetWeakness}
-        onStart={() => { setInSessionSetup(false); setInMeeting(true); setPendingTargetWeakness(null); }}
+        onStart={() => { setInSessionSetup(false); setInCalibration(true); }}
         onCancel={() => { setInSessionSetup(false); setPendingTargetWeakness(null); }}
       />
     );
@@ -174,11 +175,13 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
     return <SessionMeeting onEnd={() => { setInMeeting(false); setSelectedSessionId(null); setView("results"); }} />;
   }
 
+  // Framing check, then straight into the interview.
   if (inCalibration) {
     return (
       <CalibrationSession
-        onDone={() => { setInCalibration(false); setView("calibration"); }}
-        onCancel={() => setInCalibration(false)}
+        preflight
+        onDone={() => { setInCalibration(false); setInMeeting(true); setPendingTargetWeakness(null); }}
+        onCancel={() => { setInCalibration(false); setPendingTargetWeakness(null); }}
       />
     );
   }
@@ -188,7 +191,6 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
     : view === "results" ? "Results"
     : view === "sessions" ? "Sessions"
     : view === "settings" ? "Settings"
-    : view === "calibration" ? "Calibration"
     : "Trends";
 
   return (
@@ -274,11 +276,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
           </div>
         </header>
 
-        {view === "calibration" ? (
-          <div className="flex-1 min-h-0 overflow-hidden px-6 py-6">
-            <CalibrationView onRecalibrate={() => setInCalibration(true)} />
-          </div>
-        ) : (
+        {(
           <div className="flex-1 overflow-y-auto px-6 py-8 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <div className="mx-auto max-w-5xl flex flex-col gap-6">
               {view === "dashboard" && (

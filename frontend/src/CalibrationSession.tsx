@@ -10,6 +10,16 @@ import { useMediaPipe, buildMediaPipeBaseline } from "./useMediaPipe";
 interface CalibrationSessionProps {
   onDone: () => void;
   onCancel: () => void;
+  /**
+   * Pre-session framing check rather than the full calibration.
+   *
+   * Calibration is no longer a place the user visits; it is the first few
+   * seconds of every session. In preflight we skip the profile form and the
+   * 40-second reading passage and run only what the interview actually needs:
+   * confirm the face AND chest are in frame, then capture the neutral posture
+   * baseline that posture-shift and fidget detection measure against.
+   */
+  preflight?: boolean;
 }
 
 type Phase = "profile" | "intro" | "checking" | "recording" | "done";
@@ -70,8 +80,8 @@ function buildBaseline(samples: CalibrationSample[], recordedMs: number): Baseli
   };
 }
 
-export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCancel }) => {
-  const [phase, setPhase] = useState<Phase>("intro");
+export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCancel, preflight = false }) => {
+  const [phase, setPhase] = useState<Phase>(preflight ? "checking" : "intro");
   const [elapsed, setElapsed] = useState(0);
   const [holdMs, setHoldMs] = useState(0);
   const [brightness, setBrightness] = useState<number | null>(null);
@@ -451,6 +461,18 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
       {phase === "checking" && (
         <div className="flex-1 min-h-0 flex flex-col gap-4 p-4">
+          {/* The only two things the user has to get right, stated once and
+              up front, because everything downstream depends on them. */}
+          {preflight && (
+            <div className="shrink-0 border border-white/20 px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Before we start</p>
+              <p className="mt-1 text-[15px] leading-relaxed text-white/80" style={{ fontWeight: 300 }}>
+                Get your <span className="text-white">face and chest both in frame</span>, then
+                <span className="text-white"> don&apos;t move your camera</span> for the rest of the session.
+                Posture and breathing are measured against where you start.
+              </p>
+            </div>
+          )}
           <div className="relative flex-1 min-h-0 border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
             {stream ? (
               <CameraFeed ref={videoRef} stream={stream} />
@@ -494,7 +516,11 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
           <div className="shrink-0 flex items-center justify-between">
             <span className="text-[12px] text-white/40">
-              {allReady ? "Hold steady…" : "Waiting for lighting, face, and framing to look right."}
+              {allReady
+                ? "Hold steady…"
+                : preflight
+                  ? "Sit back so your face AND chest are both in frame, in even lighting."
+                  : "Waiting for lighting, face, and framing to look right."}
             </span>
             <button
               onClick={onCancel}
@@ -571,12 +597,26 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
                     onClick={() => {
                       setGazeCalibrationOpen(false);
                       setGazeCalibrationDone(true);
+                      if (preflight) {
+                        // Preflight captures the posture baseline and stops.
+                        // The Presage half of the baseline needs the 40-second
+                        // reading, which we deliberately do not run before an
+                        // interview -- those signals simply go unbaselined and
+                        // the scoring degrades the way it already does for any
+                        // missing signal.
+                        const baseline = buildBaseline(samplesRef.current, Math.max(holdMs, 1));
+                        baseline.mediaPipe = buildMediaPipeBaseline(mediaPipeSamplesRef.current);
+                        pendingBaseline.current = { baseline, id: crypto.randomUUID() };
+                        void persistBaseline();
+                        onDone();
+                        return;
+                      }
                       setReadingInstructionsOpen(true);
                     }}
                     disabled={mediaPipe.status === "loading"}
                     className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70 disabled:opacity-40"
                   >
-                    Continue
+                    {preflight ? "Start interview" : "Continue"}
                   </button>
                 </div>
               </div>

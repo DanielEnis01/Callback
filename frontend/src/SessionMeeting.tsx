@@ -233,11 +233,12 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   const practiceTarget = getSessionContext()?.targetWeakness ?? null;
   const trackedTiles = practiceTarget ? TRAIT_MONITORS[practiceTarget] ?? null : null;
-  // No target at all (generic session) shows the full board, exactly as
-  // before. A target WITH no live signal falls through to the STAR card.
-  const metrics = practiceTarget
-    ? (trackedTiles ?? []).map((key) => ALL_METRICS[key]).filter(Boolean)
-    : Object.values(ALL_METRICS);
+  // A generic session shows NO live tiles. Every signal is still captured and
+  // scored exactly as before -- this is purely about what is on screen. With
+  // nothing being practised there is no number the user should be watching,
+  // and a wall of live biometrics during an interview invites them to perform
+  // for the readout instead of answering the question.
+  const metrics = (trackedTiles ?? []).map((key) => ALL_METRICS[key]).filter(Boolean);
 
   // Question-type label for the footer's left rail. `questionIndex` counts
   // questions asked, so the one on the table is the previous slot.
@@ -389,7 +390,14 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
         </div>
 
         <div className="flex-1 min-w-0 h-full flex items-center gap-2 py-3">
-          {practiceTarget && trackedTiles === null ? (
+          {!practiceTarget ? (
+            /* Generic session: nothing to watch. Signals still record. */
+            <div className="flex-1 min-w-0 h-full flex items-center">
+              <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-white/30">
+                <Activity className="h-3.5 w-3.5" /> Recording — answer naturally, we&apos;ll score it afterwards
+              </span>
+            </div>
+          ) : trackedTiles === null ? (
             /* Practising something with no live signal behind it (a verbal
                trait, or free text like "STAR summary"). Rather than show
                unrelated biometrics, show the thing that actually helps in
@@ -416,8 +424,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
           ) : (
             <>
               <div className="flex items-center gap-2 pr-3 shrink-0 text-[11px] uppercase tracking-[0.14em] text-white/40">
-                <Activity className="h-3.5 w-3.5" />
-                {practiceTarget ? "Tracking" : "Live monitoring"}
+                <Activity className="h-3.5 w-3.5" /> Tracking
               </div>
               <div
                 className="grid gap-px bg-white/12 border border-white/12 flex-1 min-w-0"
