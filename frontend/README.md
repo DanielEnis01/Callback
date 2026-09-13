@@ -68,10 +68,12 @@ processing, retry, and removal states. The selected resume and assistant IDs are
 remembered locally. Old profiles that saved only a filename must upload the file
 once. Replacing a resume removes the old document after the new one is ready.
 
-**Start session** now prepares a real opening question using the indexed resume,
-saved target roles, and optional job-posting text. The question is displayed in
-the recruiter panel before any live-session data is sent. The login screen is
-still a mock, so this context is per browser/device until real accounts exist.
+**Start session** opens the per-session resume, job-posting, and practice-focus
+screen, then starts the Gemini/ElevenLabs voice conversation. The Backboard
+`prepareInterview()` helper and session-start API remain available, but the
+voice flow currently uses its own opening greeting and static recruiter prompt.
+The login screen is still a mock, so context is per browser/device until real
+accounts exist.
 
 `src/backboard.ts` owns the API calls and saved upload state;
 `src/ResumeUpload.tsx` is the shared uploader. See the

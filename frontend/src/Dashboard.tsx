@@ -1,4 +1,4 @@
-import { useRef, useState, FC, ElementType, ReactNode } from "react";
+import { useState, FC, ElementType, ReactNode } from "react";
 import {
   LayoutDashboard,
   FileBarChart,
@@ -14,14 +14,14 @@ import {
   ChevronRight,
   Mail,
   Briefcase,
-  Loader2,
   Check,
 } from "lucide-react";
 import { SessionMeeting } from "./SessionMeeting";
 import { CalibrationSession } from "./CalibrationSession";
 import { getBaseline, getInterviewProfile, saveInterviewProfile } from "./baselineStore";
 import { ResumeUpload } from "./ResumeUpload";
-import { getReadyResume, prepareInterview, type PreparedInterview, type ResumeDocument } from "./backboard";
+import { getReadyResume, type ResumeDocument } from "./backboard";
+import { SessionSetup } from "./SessionSetup";
 
 interface DashboardProps {
   onLogout: () => void;
@@ -128,45 +128,24 @@ const SectionCard: FC<{ title: string; children: ReactNode; className?: string; 
 
 export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
   const [view, setView] = useState<View>("dashboard");
+  const [inSessionSetup, setInSessionSetup] = useState(false);
   const [inMeeting, setInMeeting] = useState(false);
   const [inCalibration, setInCalibration] = useState(false);
-  const [preparedInterview, setPreparedInterview] = useState<PreparedInterview | null>(null);
-  const [preparing, setPreparing] = useState(false);
-  const [preparationError, setPreparationError] = useState<string | null>(null);
-  const starting = useRef(false);
 
-  const startInterview = async () => {
-    if (starting.current) return;
-    starting.current = true;
-    setPreparing(true);
-    setPreparationError(null);
-    try {
-      const prepared = await prepareInterview();
-      setPreparedInterview(prepared);
-      setInMeeting(true);
-    } catch (error) {
-      setPreparationError(error instanceof Error ? error.message : "Your interview could not be prepared.");
-      setView("settings");
-    } finally {
-      starting.current = false;
-      setPreparing(false);
-    }
-  };
-
-  if (preparing) {
-    return <div className="h-screen bg-black text-white flex flex-col items-center justify-center gap-4" role="status">
-      <Loader2 className="h-7 w-7 animate-spin" />
-      <p className="text-[16px]">Preparing your interview…</p>
-      <p className="text-[13px] text-white/50">Using your resume and interview target to shape the opening question.</p>
-    </div>;
+  // Every session starts with a quick "what are you practicing for" gate —
+  // confirm/replace the resume and paste this session's job posting —
+  // before the meeting itself opens. See SessionSetup.tsx.
+  if (inSessionSetup) {
+    return (
+      <SessionSetup
+        onStart={() => { setInSessionSetup(false); setInMeeting(true); }}
+        onCancel={() => setInSessionSetup(false)}
+      />
+    );
   }
 
-  if (inMeeting && preparedInterview) {
-    return <SessionMeeting
-      assistantId={preparedInterview.assistant_id}
-      openingQuestion={preparedInterview.content}
-      onEnd={() => { setInMeeting(false); setPreparedInterview(null); setView("results"); }}
-    />;
+  if (inMeeting) {
+    return <SessionMeeting onEnd={() => { setInMeeting(false); setView("results"); }} />;
   }
 
   if (inCalibration) {
@@ -198,7 +177,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
         </div>
 
         <button
-          onClick={() => void startInterview()}
+          onClick={() => setInSessionSetup(true)}
           aria-label="Start session"
           className="mt-6 flex h-10 w-full items-center justify-center bg-white text-black rounded-none transition-opacity active:opacity-70"
         >
@@ -269,11 +248,6 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
           </div>
         </header>
 
-        {preparationError && <div role="alert" className="mx-6 mt-4 border border-red-300/30 p-3 text-[13px] text-red-200">
-          {preparationError}
-          <button onClick={() => void startInterview()} className="ml-4 underline underline-offset-4">Retry interview preparation</button>
-        </div>}
-
         {view === "calibration" ? (
           <div className="flex-1 min-h-0 overflow-hidden px-6 py-6">
             <CalibrationView onRecalibrate={() => setInCalibration(true)} />
@@ -281,7 +255,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-8 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <div className="mx-auto max-w-5xl flex flex-col gap-6">
-              {view === "dashboard" && <OverallView onStart={() => void startInterview()} onViewSessions={() => setView("sessions")} />}
+              {view === "dashboard" && <OverallView onStart={() => setInSessionSetup(true)} onViewSessions={() => setView("sessions")} />}
               {view === "results" && <ResultsView onViewSessions={() => setView("sessions")} />}
               {view === "sessions" && <SessionsView onOpen={() => setView("results")} />}
               {view === "trends" && <TrendsView />}
@@ -488,7 +462,7 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
           ],
         },
         {
-          heading: "Motion & arousal",
+          heading: "Motion & stress",
           rows: [
             { label: "Seat micro-motion", value: fmt(baseline.microMotion.seat, 3) ?? "Not enough data" },
             { label: "Knee micro-motion", value: fmt(baseline.microMotion.knees, 3) ?? "Not enough data" },
@@ -519,7 +493,7 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
           ],
         },
         {
-          heading: "Motion & arousal",
+          heading: "Motion & stress",
           rows: [
             { label: "Seat micro-motion", value: "Low" },
             { label: "Knee micro-motion", value: "Low" },

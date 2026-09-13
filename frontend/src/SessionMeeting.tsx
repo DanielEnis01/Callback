@@ -1,35 +1,50 @@
-import { useEffect, useState, FC } from "react";
+import { useEffect, useState, useRef, FC } from "react";
 import { Video, VideoOff, PhoneOff, ChevronDown, ChevronUp, Activity } from "lucide-react";
 import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
+import { useMediaPipe } from "./useMediaPipe";
+import { useConversation } from "./useConversation";
+import { DevPanel } from "./DevPanel";
 
 interface SessionMeetingProps {
-  assistantId?: string;
   onEnd: () => void;
-  openingQuestion: string;
 }
 
-export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, openingQuestion }) => {
+export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const [camOff, setCamOff] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [aiSpeaking, setAiSpeaking] = useState(true);
   const [minimized, setMinimized] = useState(false);
 
-  // Real perception signal from the Presage SmartSpectra SDK — it owns
-  // camera acquisition itself (see the `stream` handed to CameraFeed
-  // below), analyzing the live feed for expression + HRV-based stress.
-  // Fillers/pace still need a speech pipeline that isn't wired up yet, so
-  // those show as pending rather than invented numbers.
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaPipe = useMediaPipe(!camOff, videoRef);
+
+  const statsRef = useRef({
+    // Sliding window of the last 60 frames (~15 seconds at 4fps)
+    recentLookHistory: [] as boolean[],
+  });
+
+  // Eye contact — posture shifts/fidgeting are now tracked inside
+  // useMediaPipe itself (see POSTURE_*/FIDGET_* constants there), so this
+  // effect only has to track the eye-contact rolling window.
+  useEffect(() => {
+    if (mediaPipe.status !== "ready") return;
+
+    // Maintain a sliding window of the last ~15 seconds of eye contact
+    statsRef.current.recentLookHistory.push(mediaPipe.lookingAtCamera);
+    if (statsRef.current.recentLookHistory.length > 60) {
+      statsRef.current.recentLookHistory.shift();
+    }
+  }, [mediaPipe]);
+
   const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff);
 
+  // ── Voice conversation loop (STT → Gemini → ElevenLabs TTS) ─────────────────
+  const conversation = useConversation();
+
+  // Session clock
   useEffect(() => {
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    const t = setInterval(() => setAiSpeaking((s) => !s), 3200);
     return () => clearInterval(t);
   }, []);
 
@@ -39,16 +54,25 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
 
   const clock = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
 
-  // Cardio/breathing/expression stay empty until the SDK's rPPG validation
-  // phase completes (it needs a still, centered, well-lit face for a few
-  // seconds) — show its hint instead of a bare dash while that's pending.
   const pending = status === "error" ? "Unavailable" : validationHint ?? "—";
+
+  const recentHistory = statsRef.current.recentLookHistory;
+  const eyeContactPct = recentHistory.length > 0
+    ? Math.round((recentHistory.filter(Boolean).length / recentHistory.length) * 100)
+    : 100;
 
   const metrics = [
     { label: "Emotion", value: emotion ?? pending },
     { label: "Pulse", value: pulseBpm ? `${pulseBpm} bpm` : pending },
-    { label: "Fillers", value: "—" },
-    { label: "Pace", value: "—" },
+    { label: "Eye Contact", value: `${eyeContactPct}%` },
+    {
+      label: "Posture",
+      value: mediaPipe.isFidgeting
+        ? "Fidgeting"
+        : mediaPipe.postureShiftCount > 0
+          ? `Steady (${mediaPipe.postureShiftCount})`
+          : "Steady",
+    },
     { label: "Stress", value: stress ?? pending },
   ];
 
@@ -74,7 +98,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
 
       {/* Stage */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1.9fr_1fr] gap-4 p-4">
-        {/* Left — user camera (mock) */}
+        {/* Left — user camera */}
         <div className="relative border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
           {camOff ? (
             <div className="flex flex-col items-center gap-3 text-white/40">
@@ -84,7 +108,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
               <span className="text-[13px]">Camera off</span>
             </div>
           ) : stream ? (
-            <CameraFeed stream={stream} />
+            <CameraFeed ref={videoRef} stream={stream} />
           ) : (
             <div className="flex flex-col items-center gap-2 text-white/25 px-6 text-center">
               <span className="text-[12px] uppercase tracking-[0.16em]">
@@ -93,13 +117,37 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
               {error && <span className="text-[11px] normal-case text-white/35 max-w-sm">{error}</span>}
             </div>
           )}
+
           <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">You</span>
+
           {!camOff && (
             <span className="absolute top-3 left-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-white/45">
               <span className="h-2 w-2 bg-white" /> Live
             </span>
           )}
-          {/* small camera toggle, tucked in corner so it doesn't obstruct */}
+
+          {/* Mic is recording — micLevel bars (in the badge above) give live feedback */}
+
+          {/* Mic status badge with live volume bar */}
+          {conversation.listening && (
+            <span className="absolute top-3 right-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-blue-400 bg-black/50 px-2 py-1">
+              <span
+                className="h-3 w-1 rounded-full bg-blue-400"
+                style={{ transform: `scaleY(${0.3 + conversation.micLevel * 0.7})`, transition: "transform 0.05s" }}
+              />
+              <span
+                className="h-3 w-1 rounded-full bg-blue-400"
+                style={{ transform: `scaleY(${0.2 + conversation.micLevel * 0.8})`, transition: "transform 0.08s" }}
+              />
+              <span
+                className="h-3 w-1 rounded-full bg-blue-400"
+                style={{ transform: `scaleY(${0.4 + conversation.micLevel * 0.6})`, transition: "transform 0.06s" }}
+              />
+              Listening
+            </span>
+          )}
+
+          {/* Camera toggle */}
           <button
             onClick={() => setCamOff((c) => !c)}
             aria-label={camOff ? "Start video" : "Stop video"}
@@ -110,19 +158,27 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
         </div>
 
         {/* Right — AI recruiter orb */}
-        <div className="relative border border-white/12 bg-white/[0.02] overflow-hidden flex flex-col items-center justify-center gap-5 px-6 py-12">
+        <div className="relative border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
           <div className="w-[75%] max-w-[320px] aspect-square">
-            <VoiceOrb className="w-full h-full" speaking={aiSpeaking} />
+            {/* VoiceOrb driven by actual TTS playback state */}
+            <VoiceOrb className="w-full h-full" speaking={conversation.aiSpeaking} />
           </div>
-          <p className="max-w-xl max-h-48 overflow-y-auto whitespace-pre-wrap text-center text-[16px] leading-relaxed text-white/90">
-            {openingQuestion}
-          </p>
           <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">
             Callback Recruiter
           </span>
           <span className="absolute top-3 left-3 text-[11px] uppercase tracking-[0.14em] text-white/45">
-            {aiSpeaking ? "Speaking" : "Listening"}
+            {conversation.aiSpeaking ? "Speaking" : conversation.listening ? "Listening to you" : "Ready"}
           </span>
+
+          {/* TTS error */}
+          {conversation.error && (
+            <div
+              className="absolute bottom-10 left-3 right-3 text-center px-3 py-1.5 text-[11px] text-red-400 leading-snug"
+              style={{ background: "rgba(0,0,0,0.65)" }}
+            >
+              {conversation.error}
+            </div>
+          )}
         </div>
       </div>
 
@@ -174,6 +230,9 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ assistantId, onEnd, op
           End session
         </button>
       </footer>
+
+      {/* Dev tools — only visible in Vite dev mode */}
+      <DevPanel conversation={conversation} />
     </div>
   );
 };
