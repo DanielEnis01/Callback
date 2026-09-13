@@ -4,7 +4,7 @@ const GEMINI_SPEAK_URL = "http://localhost:3001/api/services/gemini/speak";
 const TTS_ONLY_URL = "http://localhost:3001/api/tts/speak";
 const STT_URL = "http://localhost:3001/api/stt/transcribe";
 
-const OPENING_GREETING =
+const DEFAULT_OPENING_GREETING =
   "Hi! Welcome to your mock interview session. I'm your Callback recruiter. " +
   "Whenever you're ready, go ahead and tell me a little about yourself.";
 
@@ -38,6 +38,13 @@ export interface ConversationControls {
   cancelAudio: () => void;
 }
 
+export interface ConversationOptions {
+  /** Extra context (resume, job posting) to append to the Gemini system prompt. */
+  systemContext?: string;
+  /** Custom opening message from Backboard's prepareInterview (replaces the default greeting). */
+  openingMessage?: string;
+}
+
 /**
  * useConversation — live voice conversation loop.
  *
@@ -53,7 +60,7 @@ export interface ConversationControls {
  *  6. Response { text, audio (base64) } → decode → play AudioContext
  *  7. Audio ends → VAD loop resumes → repeat from step 3
  */
-export function useConversation(): ConversationControls {
+export function useConversation(options: ConversationOptions = {}): ConversationControls {
   const [listening, setListening] = useState(false);
   const [aiSpeaking, setAiSpeaking] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -305,7 +312,11 @@ export function useConversation(): ConversationControls {
         const res = await fetch(GEMINI_SPEAK_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, history: historyRef.current }),
+          body: JSON.stringify({
+            message: text,
+            history: historyRef.current,
+            ...(options.systemContext ? { systemContext: options.systemContext } : {}),
+          }),
           signal: controller.signal,
         });
 
@@ -379,10 +390,11 @@ export function useConversation(): ConversationControls {
       abortRef.current = controller;
 
       try {
+        const greeting = options.openingMessage || DEFAULT_OPENING_GREETING;
         const res = await fetch(TTS_ONLY_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: OPENING_GREETING }),
+          body: JSON.stringify({ text: greeting }),
           signal: controller.signal,
         });
         if (res.ok) {

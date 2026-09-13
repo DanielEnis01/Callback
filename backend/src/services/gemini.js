@@ -31,16 +31,23 @@ function getClient() {
 // Called by POST /api/services/gemini/test (see routes/services.js).
 // history is an array of { role: "user" | "model", parts: [{ text }] }
 // from previous turns, so multi-turn context is preserved between calls.
-export async function testRecruiterPrompt(message, history = []) {
+// systemContext is optional extra context (resume, job posting, etc.)
+// that gets appended to the base recruiter prompt so Gemini can reference
+// the candidate's actual background during the conversation.
+export async function testRecruiterPrompt(message, history = [], systemContext = "") {
   const ai = getClient();
 
   const contents = [...history, { role: "user", parts: [{ text: message }] }];
+
+  const fullSystemPrompt = systemContext
+    ? `${RECRUITER_SYSTEM_PROMPT}\n\n--- Candidate Context ---\n${systemContext}`
+    : RECRUITER_SYSTEM_PROMPT;
 
   const response = await ai.models.generateContent({
     model: MODEL,
     contents,
     config: {
-      systemInstruction: RECRUITER_SYSTEM_PROMPT,
+      systemInstruction: fullSystemPrompt,
     },
   });
 

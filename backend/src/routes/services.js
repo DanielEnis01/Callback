@@ -23,14 +23,14 @@ router.get("/", (_req, res) => {
 //     -H "Content-Type: application/json" \
 //     -d '{"message":"Hi, I'\''m ready to start."}'
 router.post("/gemini/test", async (req, res) => {
-  const { message, history } = req.body ?? {};
+  const { message, history, systemContext } = req.body ?? {};
 
   if (!message) {
     return res.status(400).json({ error: "message is required" });
   }
 
   try {
-    const reply = await testRecruiterPrompt(message, history);
+    const reply = await testRecruiterPrompt(message, history, systemContext);
     res.json({ reply });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -45,7 +45,7 @@ router.post("/gemini/test", async (req, res) => {
 //
 // Returns JSON: { text: string, audio: string (base64 mp3) }
 router.post("/gemini/speak", async (req, res) => {
-  const { message, history, voiceId } = req.body ?? {};
+  const { message, history, voiceId, systemContext } = req.body ?? {};
 
   if (!message) {
     return res.status(400).json({ error: "message is required" });
@@ -53,7 +53,7 @@ router.post("/gemini/speak", async (req, res) => {
 
   try {
     // Step 1: Gemini generates the recruiter reply.
-    const text = await testRecruiterPrompt(message, history);
+    const text = await testRecruiterPrompt(message, history, systemContext);
 
     // Step 2: ElevenLabs synthesizes the reply.
     // synthesizeSpeech() returns a Node.js Readable stream of audio/mpeg

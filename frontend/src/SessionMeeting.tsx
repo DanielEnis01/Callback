@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, FC } from "react";
+import { useEffect, useState, useRef, useMemo, FC } from "react";
 import { Video, VideoOff, PhoneOff, ChevronDown, ChevronUp, Activity } from "lucide-react";
 import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
@@ -6,6 +6,8 @@ import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
 import { useConversation } from "./useConversation";
 import { DevPanel } from "./DevPanel";
+import { getReadyResume, prepareInterview } from "./backboard";
+import { getInterviewProfile, getSessionContext } from "./baselineStore";
 
 interface SessionMeetingProps {
   onEnd: () => void;
@@ -39,8 +41,38 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff);
 
+  // ── Build interview context for Gemini ─────────────────────────────────────
+  const [openingMessage, setOpeningMessage] = useState<string | undefined>();
+
+  const systemContext = useMemo(() => {
+    const profile = getInterviewProfile();
+    const session = getSessionContext();
+    const parts: string[] = [];
+    if (profile?.name) parts.push(`Candidate name: ${profile.name}`);
+    if (profile?.targetRoles) parts.push(`Target roles: ${profile.targetRoles}`);
+    if (session?.jobPosting) parts.push(`Job posting:\n${session.jobPosting}`);
+    if (session?.targetWeakness) parts.push(`Weakness to target this session: ${session.targetWeakness}`);
+    if (profile?.resume) parts.push(`Resume uploaded: ${profile.resume.name}`);
+    return parts.length > 0 ? parts.join("\n\n") : undefined;
+  }, []);
+
+  // Try to get a personalized opening question from Backboard
+  useEffect(() => {
+    const resume = getReadyResume();
+    if (!resume) return; // no resume indexed — fall back to default greeting
+    prepareInterview()
+      .then((prepared) => {
+        if (prepared.content?.trim()) {
+          setOpeningMessage(prepared.content);
+        }
+      })
+      .catch((err) => {
+        console.warn("[SessionMeeting] Backboard prepareInterview failed, using default greeting:", err);
+      });
+  }, []);
+
   // ── Voice conversation loop (STT → Gemini → ElevenLabs TTS) ─────────────────
-  const conversation = useConversation();
+  const conversation = useConversation({ systemContext, openingMessage });
 
   // Session clock
   useEffect(() => {
