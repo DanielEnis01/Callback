@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SmartSpectraSDK, breathingMetrics, faceMetrics } from "@smartspectra/node-sdk/renderer";
+import { presageMetrics, type MetricValues } from "./sessionRecorder";
 import { decodeMetrics } from "@smartspectra/node-sdk/messages";
 
 // Requested individually below (not via the cardioMetrics bundle) so we can
@@ -93,7 +94,9 @@ const DEFAULT_STATE: PresageSession = {
  * actual API (SmartSpectra owns camera acquisition itself; see
  * CameraFeed's `stream` prop for how the picture reaches the screen).
  */
-export function usePresageSession(active: boolean): PresageSession {
+export function usePresageSession(active: boolean, onMetrics?: (metrics: MetricValues) => void): PresageSession {
+  const metricsCallback = useRef(onMetrics);
+  metricsCallback.current = onMetrics;
   const [state, setState] = useState<PresageSession>(DEFAULT_STATE);
 
   const smoothedScores = useRef<Record<string, number>>({});
@@ -118,7 +121,15 @@ export function usePresageSession(active: boolean): PresageSession {
     try {
       sdk = new SmartSpectraSDK({
         apiKey,
-        requestedMetrics: [...breathingMetrics, PULSE_RATE_METRIC, HRV_METRIC, ...faceMetrics],
+        // HRV_METRIC dropped: it needs SmartSpectra's on-device physiology-inference
+        // model, which is failing to load in this environment ("Unable to resolve
+        // configured model path" at startup) and permanently wedges the native
+        // engine (endless "not in a valid state" frame drops) once requested.
+        // Pulse rate + breathing don't need that model, per the SDK's own
+        // fallback guidance. Re-add HRV_METRIC once the model-load issue
+        // (network/firewall or API key/quota — see SmartSpectra's dashboard) is
+        // resolved.
+        requestedMetrics: [...breathingMetrics, PULSE_RATE_METRIC, ...faceMetrics],
       });
     } catch (err) {
       // Most likely cause: window.__smartspectraBridge isn't installed —
@@ -142,8 +153,18 @@ export function usePresageSession(active: boolean): PresageSession {
       if (cancelled) return;
       // ProcessingStatus: kRunning = 3, kError = 5 (see the SDK's enum export
       // if these need to change — TestCamera pinned them the same way).
-      if (status === 3) setState((s) => ({ ...s, status: "running" }));
-      else if (status === 5) setState((s) => ({ ...s, status: "error" }));
+      if (status === 3) {
+        setState((s) => ({ ...s, status: "running" }));
+      } else if (status === 5) {
+        // The native C++ engine enters a permanent "not in a valid state"
+        // loop when its on-device model fails to load, spamming stderr with
+        // hundreds of identical warnings per second. The only way to stop it
+        // is to tear down the SDK — the JS on("error") handler doesn't
+        // intercept native-layer warnings. Stop immediately.
+        console.warn("[Presage] Native engine entered error state — stopping SDK to prevent log spam.");
+        sdk.stop().catch(() => {});
+        setState((s) => ({ ...s, status: "error", error: "Presage SDK model load failed. Camera/tracking still works." }));
+      }
     });
 
     // The SDK won't report cardio/breathing/expression until its rPPG
@@ -167,7 +188,8 @@ export function usePresageSession(active: boolean): PresageSession {
       }
       if (typeof Buffer !== "undefined" && Buffer.isBuffer?.(metrics)) return;
 
-      const expression = last(metrics?.face?.expression);
+      metricsCallback.current?.(presageMetrics(metrics));
+      const expression = last<any>(metrics?.face?.expression);
       if (expression?.scores?.length) {
         for (const s of expression.scores) {
           const name = EXPRESSION_TYPE_NAMES[s.type] ?? String(s.type);
@@ -184,8 +206,28 @@ export function usePresageSession(active: boolean): PresageSession {
       if (breath) latestRef.current.breath = breath;
     });
 
+    let consecutiveStateErrors = 0;
+
     sdk.on("error", (code, message) => {
       if (cancelled) return;
+
+      // The native engine enters a permanent "not in a valid state" loop
+      // when the on-device physiology model fails to load. Every frame it
+      // tries to process triggers this error — hundreds per second, making
+      // the console unusable. Once we've seen it 3 times in a row, stop
+      // the SDK entirely; there's no way to recover without restarting
+      // the process anyway.
+      if (message?.includes("not in a valid state")) {
+        consecutiveStateErrors++;
+        if (consecutiveStateErrors >= 3) {
+          console.warn("[Presage] SDK wedged ('not in a valid state' ×3) — stopping to prevent log spam.");
+          sdk.stop().catch(() => {});
+          return;
+        }
+      } else {
+        consecutiveStateErrors = 0;
+      }
+
       console.error("SmartSpectra error:", code, message);
       setState((s) => ({ ...s, status: "error", error: message }));
     });

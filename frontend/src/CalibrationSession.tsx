@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, FC } from "react";
-import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, UploadCloud } from "lucide-react";
-import { CalibrationDelayAlert } from "./CalibrationDelayAlert";
-import { shouldShowCalibrationNotice } from "./calibrationNotice";
+import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, UploadCloud, Eye } from "lucide-react";
 import { CameraFeed } from "./CameraFeed";
 import { useCalibrationSession, type CalibrationSample } from "./useCalibrationSession";
-import { saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
+import { remoteStorageEnabled, saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
+import { uploadResume } from "./dataApi";
+import { fetchReadingText, fallbackQuotes } from "./readingText";
 import { useMediaPipe, buildMediaPipeBaseline } from "./useMediaPipe";
 
 interface CalibrationSessionProps {
@@ -14,11 +14,7 @@ interface CalibrationSessionProps {
 
 type Phase = "profile" | "intro" | "checking" | "recording" | "done";
 
-const MIN_RECORDING_SECONDS = 25;
-  // A few valid vital readings are enough for this short calibration. Optional
-// signals such as EDA and micromotion may still be collected, but they must not
-// hold the user in calibration for 35+ seconds while their models initialize.
-const MIN_VALID_READINGS = 3;
+const RECORDING_SECONDS = 40;
 // How long every readiness check has to hold true, back-to-back, before we
 // trust it and start recording — short enough not to be annoying, long
 // enough to filter out someone just passing through frame.
@@ -33,9 +29,8 @@ const MIN_BRIGHTNESS = 55;
 const MAX_BRIGHTNESS = 235;
 
 function mean(values: number[]): number | null {
-  const finite = values.filter(Number.isFinite);
-  if (!finite.length) return null;
-  return finite.reduce((a, b) => a + b, 0) / finite.length;
+  if (!values.length) return null;
+  return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
 function stressLabelFor(baevsky: number): "Low" | "Moderate" | "High" {
@@ -75,46 +70,24 @@ function buildBaseline(samples: CalibrationSample[], recordedMs: number): Baseli
   };
 }
 
-function validCount(samples: CalibrationSample[], getValue: (sample: CalibrationSample) => number | undefined): number {
-  return samples.reduce((count, sample) => count + (Number.isFinite(getValue(sample)) ? 1 : 0), 0);
-}
-
-function getBaselineReadiness(samples: CalibrationSample[]) {
-  const stressReadings = Math.min(
-    validCount(samples, (s) => s.hrvRmssd),
-    validCount(samples, (s) => s.hrvSdnn),
-    validCount(samples, (s) => s.hrvMeanNn),
-    validCount(samples, (s) => s.baevsky),
-  );
-  const items = [
-    { key: "pulse", label: "Heartbeat", count: validCount(samples, (s) => s.pulse) },
-    { key: "breathing", label: "Breathing", count: Math.min(validCount(samples, (s) => s.breathingRate), validCount(samples, (s) => s.breathingAmplitude)) },
-    { key: "stress", label: "Stress / HRV", count: stressReadings },
-  ].map((item) => ({
-    ...item,
-    ready: item.count >= MIN_VALID_READINGS,
-  }));
-
-  return { items, ready: items.every((item) => item.ready) };
-}
-
 export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCancel }) => {
   const [phase, setPhase] = useState<Phase>("intro");
   const [elapsed, setElapsed] = useState(0);
-  const [waitingSeconds, setWaitingSeconds] = useState(0);
-  const [facePausedForTooLong, setFacePausedForTooLong] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [holdMs, setHoldMs] = useState(0);
   const [brightness, setBrightness] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [targetRoles, setTargetRoles] = useState("");
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [savedBaseline, setSavedBaseline] = useState(false);
+  const pendingBaseline = useRef<{ baseline: Baseline; id: ReturnType<typeof crypto.randomUUID> } | null>(null);
+  const uploadedFile = useRef<File | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [draggingResume, setDraggingResume] = useState(false);
   const [readingInstructionsOpen, setReadingInstructionsOpen] = useState(false);
-  const [sampleTick, setSampleTick] = useState(0);
-  const [slowWarningDismissed, setSlowWarningDismissed] = useState(false);
-  const completionStartedRef = useRef(false);
+  const [gazeCalibrationOpen, setGazeCalibrationOpen] = useState(false);
+  const [gazeCalibrationDone, setGazeCalibrationDone] = useState(false);
   const resumeInputRef = useRef<HTMLInputElement>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -140,12 +113,26 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
     : null;
   const profileReady = name.trim().length > 0 && targetRoles.trim().length > 0 && !!resumeFile;
 
+  // Reading passage — a list of generic filler quotes, fetched fresh each
+  // time with a bundled offline fallback (see readingText.ts) so
+  // calibration never blocks on network. It remains a native scroll area,
+  // letting the person control their own reading pace throughout the scan.
+  const [quotes, setQuotes] = useState<string[]>(fallbackQuotes());
+  useEffect(() => {
+    let cancelled = false;
+    fetchReadingText().then((list) => {
+      if (!cancelled) setQuotes(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const cameraActive = phase === "checking" || phase === "recording";
-  // Do not collect baseline samples or advance the clock while the stillness
-  // instructions are in front of the camera.
-  const readingStarted = phase === "recording" && !readingInstructionsOpen;
-  const recording = readingStarted && !facePausedForTooLong;
-  const { stream, status, error, faceBox, samplesRef, validationHint, pipelineHint, cameraQualityHint, signalDiagnostics } = useCalibrationSession(cameraActive, recording, videoSize);
+  // Do not collect baseline samples or advance the clock while the reading
+  // instructions or gaze calibration are in front of the passage.
+  const recording = phase === "recording" && !readingInstructionsOpen && !gazeCalibrationOpen;
+  const { stream, status, error, faceBox, samplesRef } = useCalibrationSession(cameraActive, recording, videoSize);
 
   // MediaPipe runs alongside Presage, tracking neutral head orientation
   // and resting posture to build the MediaPipeBaseline.
@@ -193,9 +180,11 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   const faceOk = !!faceBox;
   const lightingOk = brightness != null && brightness >= MIN_BRIGHTNESS && brightness <= MAX_BRIGHTNESS;
-  // Require the face to leave room below it, then confirm MediaPipe can see
-  // both shoulders in that space. This prevents a face-only framing from
-  // passing when the upper chest is cropped out.
+  // "Chest in frame" isn't something the SDK reports directly, so this
+  // approximates it from the face box: as long as the chin sits comfortably
+  // above the bottom of the frame (with the face not filling the whole
+  // picture), there should be room for shoulders/chest below it. Ask the
+  // person to sit back a bit if this keeps failing.
   const framedOk =
     faceOk &&
     faceBox!.minY > 0.03 &&
@@ -203,16 +192,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
     faceBox!.maxY - faceBox!.minY < 0.6 &&
     faceBox!.maxY - faceBox!.minY > 0.1;
 
-  const upperChestOk =
-    mediaPipe.status === "ready" &&
-    faceOk &&
-    mediaPipe.shoulderDistance != null &&
-    mediaPipe.shoulderDistance > 0.08 &&
-    mediaPipe.midShoulderY != null &&
-    mediaPipe.midShoulderY > faceBox!.maxY &&
-    mediaPipe.midShoulderY < 0.9;
-
-  const allReady = faceOk && lightingOk && framedOk && upperChestOk;
+  const allReady = faceOk && lightingOk && framedOk;
 
   // Readiness hold timer — resets the instant any condition drops.
   useEffect(() => {
@@ -228,8 +208,8 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   useEffect(() => {
     if (phase === "checking" && holdMs >= HOLD_STEADY_MS) {
+      setGazeCalibrationOpen(true);
       setPhase("recording");
-      setReadingInstructionsOpen(true);
     }
   }, [phase, holdMs]);
 
@@ -237,6 +217,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   // face has been missing for longer than the grace period, so a brief
   // look-away doesn't quietly poison the average with empty samples.
   const faceLostSinceRef = useRef<number | null>(null);
+  const [facePausedForTooLong, setFacePausedForTooLong] = useState(false);
   useEffect(() => {
     if (phase !== "recording") return;
     if (faceOk) {
@@ -250,87 +231,37 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   }, [phase, faceOk]);
 
   useEffect(() => {
-    if (!recording || status === "error") return;
-    let previous = performance.now();
-    const tick = () => {
-      const now = performance.now();
-      setElapsed((seconds) => seconds + (now - previous) / 1000);
-      previous = now;
-    };
-    const t = setInterval(tick, 250);
-    return () => { clearInterval(t); tick(); };
-  }, [recording, status]);
-
-  // Count the whole camera session, including setup, instructions, and face
-  // loss. The alert must still fire if the SDK never reaches recording.
-  useEffect(() => {
-    if (!cameraActive) return;
-    const startedAt = performance.now();
-    setWaitingSeconds(0);
-    setSlowWarningDismissed(false);
-    const t = setInterval(() => setWaitingSeconds((performance.now() - startedAt) / 1000), 250);
+    if (phase !== "recording" || readingInstructionsOpen || facePausedForTooLong) return;
+    const t = setInterval(() => setElapsed((e) => Math.min(e + 1, RECORDING_SECONDS)), 1000);
     return () => clearInterval(t);
-  }, [cameraActive]);
-
-  // Re-render while the SDK and MediaPipe refs are filling in. Their samples
-  // are intentionally stored in refs to avoid rendering once per camera frame.
-  useEffect(() => {
-    if (phase !== "recording") return;
-    const t = setInterval(() => setSampleTick((tick) => tick + 1), 500);
-    return () => clearInterval(t);
-  }, [phase]);
-
-  const baselineReadiness = useMemo(
-    () => getBaselineReadiness(samplesRef.current),
-    [sampleTick, samplesRef],
-  );
-
-  const missingSignals = baselineReadiness.items.filter((item) => !item.ready).map((item) => {
-    let reason: string;
-    {
-      const keys = item.key === "stress" ? ["hrvRmssd", "hrvSdnn", "hrvMeanNn", "baevsky"]
-        : item.key === "breathing" ? ["breathingRate", "breathingAmplitude"] : [item.key];
-      const reported = keys.map((key) => signalDiagnostics[key]).filter(Boolean);
-      reason = error || pipelineHint || (status === "error" ? "The SDK measurement engine reported an error. Cancel and restart calibration." : "") ||
-        reported.find((message) => message.includes("unstable") || message.includes("invalid")) || reported[0] ||
-        (item.key === "stress" ? "No complete HRV readings yet. Stress is calculated from heart-beat intervals and depends on a usable pulse signal."
-          : item.key === "pulse" ? "No usable pulse readings yet. The camera pulse signal must pass the SDK's validation."
-          : "Waiting for both breathing rate and amplitude readings. Keep your chest visible.");
-      if (cameraQualityHint && !error) reason += ` Camera quality: ${cameraQualityHint}`;
-      if (validationHint && !error) reason += ` Camera guidance: ${validationHint}`;
-    }
-    if (!readingStarted && !error && !pipelineHint) reason = "Baseline collection has not started. Complete the camera check and select Begin calibration. " + reason;
-    return { label: item.label, reason };
-  });
-  const slowWarningOpen = shouldShowCalibrationNotice(cameraActive, waitingSeconds * 1000, missingSignals.length, slowWarningDismissed);
+  }, [phase, readingInstructionsOpen, facePausedForTooLong]);
 
   useEffect(() => {
-    if (
-      phase === "recording" &&
-      elapsed >= MIN_RECORDING_SECONDS &&
-      baselineReadiness.ready &&
-      !readingInstructionsOpen &&
-      !facePausedForTooLong &&
-      status === "running" &&
-      !completionStartedRef.current
-    ) {
-      completionStartedRef.current = true;
-      const baseline = buildBaseline(samplesRef.current, elapsed * 1000);
-      // Posture is useful when available, but the 25-second vitals calibration
-      // should not fail just because the optional local model is unavailable.
+    if (phase === "recording" && elapsed >= RECORDING_SECONDS) {
+      const baseline = buildBaseline(samplesRef.current, RECORDING_SECONDS * 1000);
+      // Attach MediaPipe baselines (neutral head angles, shoulder tilt, etc.)
+      // before handing off to the (possibly remote) persistence layer.
       baseline.mediaPipe = buildMediaPipeBaseline(mediaPipeSamplesRef.current);
-      if (!saveBaseline(baseline)) {
-        setSaveError("We collected your baseline, but could not save it on this device. Cancel and try again after freeing browser storage.");
-        return;
-      }
+      pendingBaseline.current = { baseline, id: crypto.randomUUID() };
+      void persistBaseline();
       setPhase("done");
     }
-  }, [phase, elapsed, baselineReadiness.ready, readingInstructionsOpen, facePausedForTooLong, status, samplesRef, mediaPipeSamplesRef]);
+  }, [phase, elapsed, samplesRef, mediaPipeSamplesRef]);
 
-  const pct = Math.min(baselineReadiness.ready ? 100 : 99, Math.round(
-    Math.min(elapsed / MIN_RECORDING_SECONDS,
-      baselineReadiness.items.filter((item) => item.ready).length / baselineReadiness.items.length) * 100));
-  const clock = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(Math.floor(elapsed % 60)).padStart(2, "0")}`;
+  async function persistBaseline() {
+    if (!pendingBaseline.current || saving) return;
+    setSaving(true); setSaveError('');
+    try {
+      const { baseline, id } = pendingBaseline.current;
+      if (!baseline.sampleCount) throw new Error('No calibration readings were captured. Please recalibrate.');
+      await saveBaseline(baseline, id);
+      setSavedBaseline(true);
+    } catch (error) { setSaveError((error as Error).message); }
+    finally { setSaving(false); }
+  }
+
+  const pct = Math.round((elapsed / RECORDING_SECONDS) * 100);
+  const clock = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
   const holdPct = Math.min(100, Math.round((holdMs / HOLD_STEADY_MS) * 100));
 
   const checklist = useMemo(
@@ -338,9 +269,8 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
       { label: "Lighting", ok: lightingOk, icon: Sun, hint: brightness == null ? "Reading…" : brightness < MIN_BRIGHTNESS ? "Too dark" : "Too bright" },
       { label: "Face visible", ok: faceOk, icon: ScanFace, hint: "Look at the camera" },
       { label: "Framing", ok: framedOk && faceOk, icon: AlignVerticalSpaceAround, hint: "Sit back so your shoulders show" },
-      { label: "Upper chest", ok: upperChestOk, icon: AlignVerticalSpaceAround, hint: mediaPipe.status === "loading" ? "Loading posture check" : "Move back until both shoulders and upper chest show" },
     ],
-    [lightingOk, faceOk, framedOk, upperChestOk, brightness, mediaPipe.status],
+    [lightingOk, faceOk, framedOk, brightness],
   );
 
   return (
@@ -357,43 +287,36 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
         </div>
         {phase === "recording" && (
           <div className="flex items-center gap-4 text-[13px] text-white/50">
-            <span className="tabular-nums">{clock} / 00:25</span>
+            <span className="tabular-nums">{clock} / 00:40</span>
             <span className="flex items-center gap-2">
-              <span className="h-2 w-2 bg-white" />
-              {readingInstructionsOpen
-                ? "Ready to begin"
-                : facePausedForTooLong
-                  ? "Paused"
-                  : elapsed >= MIN_RECORDING_SECONDS && !baselineReadiness.ready
-                    ? "Collecting remaining signals"
-                    : "Measuring vitals"}
+              <span className="h-2 w-2 bg-white" /> {readingInstructionsOpen ? "Ready to begin" : facePausedForTooLong ? "Paused" : "Measuring baseline"}
             </span>
           </div>
         )}
       </header>
 
-      {cameraActive && (
-        <div role="status" className="shrink-0 border-b border-white/12 px-6 py-2 text-xs text-white/65">
-          Session time: {Math.floor(waitingSeconds / 60)}:{String(Math.floor(waitingSeconds % 60)).padStart(2, "0")}
-          {" · "}{error || pipelineHint || cameraQualityHint || validationHint || (status === "error" ? "Measurement engine error — cancel and restart calibration." : "Waiting for camera measurements…")}
-        </div>
-      )}
-      <CalibrationDelayAlert open={slowWarningOpen} missing={missingSignals}
-        onDismiss={() => setSlowWarningDismissed(true)} onCancel={onCancel} />
-
+      {saveError && <p role="alert" className="px-6 py-3 text-red-200">{saveError}</p>}
       {phase === "profile" && (
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-8 sm:px-8">
           <form
             className="mx-auto flex w-full max-w-2xl flex-col gap-6"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
-              if (!profileReady || !resumeFile) return;
-              saveInterviewProfile({
+              if (!profileReady || !resumeFile || saving) return;
+              setSaving(true); setSaveError('');
+              try {
+              if (remoteStorageEnabled && uploadedFile.current !== resumeFile) {
+                await uploadResume(resumeFile);
+                uploadedFile.current = resumeFile;
+              }
+              await saveInterviewProfile({
                 name: name.trim(),
                 targetRoles: targetRoles.trim(),
                 resume: { name: resumeFile.name, size: resumeFile.size },
               });
               setPhase("checking");
+              } catch (error) { setSaveError((error as Error).message); }
+              finally { setSaving(false); }
             }}
           >
             <div>
@@ -482,7 +405,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               </button>
               <button
                 type="submit"
-                disabled={!profileReady}
+                disabled={!profileReady || saving}
                 className="h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity disabled:cursor-not-allowed disabled:opacity-30 active:opacity-70"
               >
                 Continue to camera check
@@ -499,12 +422,14 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               Let's find your baseline.
             </h1>
             <p className="text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
-              This is a short calibration. We&apos;ll measure your resting pulse, breathing, and stress level so
-              your interview feedback is compared with your own baseline instead of a generic average.
+              This is calibration — you'll read a few simple phrases out loud while we measure your resting
+              pulse, breathing, and stress level. There's no right answer, nothing to perform; we just need a
+              calm reading of you specifically so future sessions can be scored against your own baseline
+              instead of a generic average.
             </p>
             <p className="text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
-              First we&apos;ll check your lighting, face, and framing. Then stay still, breathe normally, and keep
-              your face and shoulders visible for 25 seconds while we capture your vitals.
+              First we'll open your camera and check the lighting, your face, and framing. Once that looks
+              good and holds steady for a couple seconds, a 40-second reading starts automatically.
             </p>
             <div className="flex items-center gap-3 mt-2">
               <button
@@ -549,7 +474,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
             )}
           </div>
 
-          <div className="shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/12 border border-white/12">
+          <div className="shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-px bg-white/12 border border-white/12">
             {checklist.map((c) => (
               <div key={c.label} className="bg-black p-4 flex items-center gap-3">
                 <span
@@ -599,78 +524,96 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               )}
             </div>
 
+            {/* Reading passage — scroll at a comfortable pace while recording */}
             <div className="shrink-0 border border-white/12 p-5">
               <span className="text-[11px] uppercase tracking-[0.16em] text-white/40">
-                Vitals calibration · 25 seconds
+                Read aloud and scroll at your own pace until the timer completes
               </span>
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {[
-                  ["Stay still", "Keep your head and shoulders relaxed."],
-                  ["Breathe normally", "Use your natural breathing rhythm."],
-                  ["Stay well lit", "Keep your face clearly visible to the camera."],
-                ].map(([title, detail]) => (
-                  <div key={title} className="border border-white/12 px-3 py-3">
-                    <p className="text-[13px] text-white">{title}</p>
-                    <p className="mt-1 text-[11px] leading-relaxed text-white/45">{detail}</p>
-                  </div>
-                ))}
+              <div className="relative mt-2 h-48">
+                <div className="calibration-reading-passage h-full overflow-y-auto pr-1" tabIndex={0}>
+                  <ul className="space-y-4">
+                    {quotes.map((q, i) => (
+                      <li key={i} className="text-[19px] leading-relaxed text-white/85" style={{ fontWeight: 300 }}>
+                        {q}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-black to-transparent" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-4 bg-gradient-to-t from-black to-transparent" />
               </div>
             </div>
 
-            <div className="shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-px bg-white/12 border border-white/12">
-              {baselineReadiness.items.map((item) => (
-                <div key={item.key} className="bg-black px-3 py-2 flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-white/65 truncate">{item.label}</span>
-                  <span className={`shrink-0 text-[10px] tabular-nums ${item.ready ? "text-white" : "text-white/35"}`}>
-                    {item.ready ? "Ready" : `${item.count}/${MIN_VALID_READINGS}`}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Vitals instructions modal */}
-            {readingInstructionsOpen && (
+            {/* Gaze calibration step — "look directly at the camera" */}
+            {gazeCalibrationOpen && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
                 <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Vitals calibration</p>
+                  <div className="flex items-center gap-3 mb-2">
+                    <ScanFace className="h-5 w-5 text-white/60" strokeWidth={1.6} />
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Posture baseline</p>
+                  </div>
                   <h2 className="mt-2 text-[24px] font-800 tracking-tight" style={{ fontWeight: 800 }}>
-                    Stay still for 25 seconds.
+                    Hold your natural posture.
                   </h2>
                   <p className="mt-4 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
-                    Sit comfortably in a well-lit area, keep your face and shoulders in frame, and breathe
-                    normally. You do not need to speak.
+                    Sit comfortably and face your screen. This sets your neutral posture baseline so we can track shifts and fidgeting during the interview.
                   </p>
-                  <p className="mt-3 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
-                    Keep the camera in the same position used during the framing check so we can capture a
-                    reliable personal baseline.
+                  <p className="mt-3 text-[14px] leading-relaxed text-white/50" style={{ fontWeight: 300 }}>
+                    {mediaPipe.status === "error"
+                      ? <span className="text-red-400">Error: {mediaPipe.error}</span>
+                      : mediaPipe.status === "loading"
+                        ? "Loading perception models…"
+                        : mediaPipe.lookingAtCamera
+                          ? gazeCalibrationDone ? "✓ Posture baseline captured" : "Great — hold steady for a moment…"
+                          : "Please look at your screen"}
                   </p>
                   <button
-                    onClick={() => setReadingInstructionsOpen(false)}
-                    className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70"
+                    onClick={() => {
+                      setGazeCalibrationOpen(false);
+                      setGazeCalibrationDone(true);
+                      setReadingInstructionsOpen(true);
+                    }}
+                    disabled={mediaPipe.status === "loading"}
+                    className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70 disabled:opacity-40"
                   >
-                    Begin calibration
+                    Continue
                   </button>
                 </div>
               </div>
             )}
 
+            {/* Reading instructions modal */}
+            {readingInstructionsOpen && !gazeCalibrationOpen && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
+                <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Before you begin</p>
+                  <h2 className="mt-2 text-[24px] font-800 tracking-tight" style={{ fontWeight: 800 }}>
+                    Read at your own pace.
+                  </h2>
+                  <p className="mt-4 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
+                    For this section, please read the quotes aloud until the progress bar is complete.
+                  </p>
+                  <p className="mt-3 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
+                    Keep your camera in the exact position used during the framing check, and stay in that same position while you read so we can capture an accurate baseline.
+                  </p>
+                  <button
+                    onClick={() => setReadingInstructionsOpen(false)}
+                    className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70"
+                  >
+                    Begin reading
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
-          {(error || mediaPipe.error || saveError) && (
-            <p role="alert" className="shrink-0 px-6 py-2 text-[13px] text-red-300">
-              Calibration cannot finish: {error || mediaPipe.error || saveError}.
-              No completed baseline has been saved. Cancel and restart calibration after resolving this error.
-            </p>
-          )}
           {/* Bottom bar */}
           <footer className="h-20 shrink-0 flex items-center gap-4 border-t border-white/12 px-6">
             <div className="flex-1 flex items-center gap-3">
               <div className="h-1.5 flex-1 max-w-md bg-white/12">
                 <div className="h-full bg-white transition-all duration-500" style={{ width: `${pct}%` }} />
               </div>
-              <span className="text-[12px] text-white/45 tabular-nums">
-                {elapsed < MIN_RECORDING_SECONDS ? `${pct}%` : baselineReadiness.ready ? "Ready" : "Collecting"}
-              </span>
+              <span className="text-[12px] text-white/45 tabular-nums">{pct}%</span>
             </div>
             <button
               onClick={onCancel}
@@ -692,14 +635,14 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               Baseline captured.
             </h1>
             <p className="text-[14px] text-white/55" style={{ fontWeight: 300 }}>
-              Saved on this device for now — once accounts are wired up this will move to your profile
-              automatically.
+              {savedBaseline ? 'Saved to your Tiger Data account.' : saving ? 'Saving your baseline…' : 'Your baseline has not been saved. Retry while this window is open.'}
             </p>
             <button
-              onClick={onDone}
+              onClick={savedBaseline ? onDone : persistBaseline}
+              disabled={saving}
               className="mt-2 flex items-center gap-2 bg-white text-black text-[13px] font-semibold px-6 h-11 rounded-none transition-opacity active:opacity-70"
             >
-              Done
+              {savedBaseline ? 'Done' : saving ? 'Saving…' : 'Retry save'}
             </button>
           </div>
         </div>

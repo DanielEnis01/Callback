@@ -2,13 +2,16 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
 
-// No React.StrictMode here: it deliberately double-invokes effects in dev
-// (mount -> cleanup -> mount) to surface impure effects, but
-// usePresageSession's effect owns a real native camera/SDK session
-// (SmartSpectra) that isn't safe to tear down and immediately recreate —
-// the main process treats it as a singleton, so the second mount's
-// sdk.start() fails with "session already started" and the first mount's
-// stream gets stopped by the discarded cleanup, producing an ended/black
-// stream. Dropping StrictMode makes the effect run exactly once, which is
-// what a stateful native session like this needs.
-ReactDOM.createRoot(document.getElementById('root')!).render(<App />)
+// StrictMode is deliberately off: it double-invokes every effect once in
+// dev (mount -> cleanup -> mount again) to catch missing/incomplete
+// cleanup. usePresageSession.ts's and useCalibrationSession.ts's cleanup
+// calls sdk.stop() without awaiting it, so the remount's sdk.start() fires
+// before the native SmartSpectra session (one per process, see
+// node_modules/@smartspectra/node-sdk's own comments) has actually torn
+// down -- the native engine then rejects the second start with "session
+// already started (run_file or start_custom called)" and the camera never
+// comes up. Real fix would be to serialize start/stop in those hooks; for
+// now this SDK just doesn't tolerate StrictMode's remount.
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <App />,
+)

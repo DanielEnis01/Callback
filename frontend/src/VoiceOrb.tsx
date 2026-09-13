@@ -147,7 +147,10 @@ export const VoiceOrb: FC<VoiceOrbProps> = ({ className, speaking = false }) => 
 
     let rafId: number;
     let renderer: Renderer | null = null;
-    let gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
+    // Renderer.gl carries OGL's canvas/renderer metadata in addition to the
+    // browser WebGL interface. Keeping that type preserves the relationship
+    // required by Program, Triangle, and Mesh.
+    let gl: Renderer["gl"] | null = null;
     let program: Program | null = null;
 
     renderer = new Renderer({ alpha: true, premultipliedAlpha: false, antialias: true, dpr: window.devicePixelRatio || 1 });
@@ -185,6 +188,17 @@ export const VoiceOrb: FC<VoiceOrbProps> = ({ className, speaking = false }) => 
       (gl.canvas as HTMLCanvasElement).style.height = h + "px";
       program.uniforms.iResolution.value.set(gl.canvas.width, gl.canvas.height, gl.canvas.width / gl.canvas.height);
     };
+    // The canvas has to follow its CONTAINER, not just the window. Listening
+    // only for window resize meant any layout change that resized this box
+    // without resizing the window -- a responsive breakpoint, a flex sibling
+    // changing width, a CSS edit in dev -- left the canvas at its old
+    // dimensions. The orb kept rendering at a stale size and drifted out of
+    // position, because the shader normalises to iResolution and the canvas
+    // still reported the size it had at mount.
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    observer?.observe(container);
+    // Still needed on top of the observer: moving the window between displays
+    // changes devicePixelRatio without changing the element's CSS size.
     window.addEventListener("resize", resize);
     resize();
 
@@ -227,6 +241,7 @@ export const VoiceOrb: FC<VoiceOrbProps> = ({ className, speaking = false }) => 
 
     return () => {
       cancelAnimationFrame(rafId);
+      observer?.disconnect();
       window.removeEventListener("resize", resize);
       if (gl?.canvas && container.contains(gl.canvas)) {
         try { container.removeChild(gl.canvas); } catch {}

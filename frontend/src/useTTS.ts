@@ -1,6 +1,16 @@
 import { useRef, useState, useCallback } from "react";
+import { getFirebaseAuth } from "./firebase";
 
-const TTS_URL = "http://localhost:3001/api/tts/speak";
+// Same base-URL/auth pattern as useConversation.ts's authedFetch.
+const apiBase = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:3001").replace(/\/$/, "");
+async function authedFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const user = getFirebaseAuth().currentUser;
+  if (!user) throw new Error("Sign in before using text-to-speech.");
+  const token = await user.getIdToken();
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(`${apiBase}/api${path}`, { ...options, headers });
+}
 
 export interface TTSControls {
   /** True while audio is actively playing. */
@@ -17,8 +27,8 @@ export interface TTSControls {
  * useTTS — ElevenLabs live streaming TTS hook.
  *
  * Fetches audio/mpeg from the backend's /api/tts/speak endpoint and plays it
- * through an AudioContext, feeding chunks into a SourceBuffer as they arrive.
- * Sets `speaking = true` while audio plays and resets it when the buffer drains.
+ * through an AudioContext. Sets `speaking = true` while audio plays and
+ * resets it when playback ends.
  *
  * Usage:
  *   const { speak, cancel, speaking, error } = useTTS();
@@ -67,7 +77,7 @@ export function useTTS(): TTSControls {
       setSpeaking(true);
 
       try {
-        const response = await fetch(TTS_URL, {
+        const response = await authedFetch("/tts/speak", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text }),

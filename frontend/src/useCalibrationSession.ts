@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  SmartSpectraSDK,
-  breathingMetrics,
-  faceMetrics,
-} from "@smartspectra/node-sdk/renderer";
+import { SmartSpectraSDK, breathingMetrics, faceMetrics } from "@smartspectra/node-sdk/renderer";
 import { decodeMetrics } from "@smartspectra/node-sdk/messages";
 
 // Requested individually below (not via the cardioMetrics bundle) so we can
-// skip ARTERIAL_PRESSURE_TRACE (16), which this app does not use. Calibration
-// intentionally requests only the normal-vitals signals needed for the
-// resting-vitals baseline; optional motion/EDA models should not delay it.
+// skip ARTERIAL_PRESSURE_TRACE (16) and EDA_TRACE. Both need the SDK's
+// encrypted on-device model cache; when that model load fails partway
+// through a session, the native engine drops into a permanently broken
+// "not in a valid state" loop and silently drops every frame after that
+// point, which reads as "lost you, can't get back in frame" no matter how
+// still you hold. Pulse rate + HRV (15, 17) are the only cardio fields this
+// app actually reads, so there's no reason to request 16 at all.
 const PULSE_RATE_METRIC = 15;
 const HRV_METRIC = 17;
 
@@ -60,15 +60,6 @@ function last<T>(arr: T[] | undefined | null): T | undefined {
   return Array.isArray(arr) && arr.length ? arr[arr.length - 1] : undefined;
 }
 
-// Protobuf objects can expose default values through their prototype even
-// when no value was sent. Only accept actual finite, reliable measurements.
-export function measuredValue(record: any, field = "value", positive = false): number | undefined {
-  if (!record || (Object.prototype.hasOwnProperty.call(record, "stable") && record.stable === false) || !Object.prototype.hasOwnProperty.call(record, field)) return undefined;
-  const value = record[field];
-  return typeof value === "number" && Number.isFinite(value) && (!positive || value > 0)
-    ? value : undefined;
-}
-
 /**
  * Normalizes a landmark point set into a 0..1 bounding box. Presage's
  * landmarks are expected to already be normalized to the frame (MediaPipe
@@ -99,10 +90,6 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
   const [status, setStatus] = useState<CalibrationStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [faceBox, setFaceBox] = useState<FaceBox | null>(null);
-  const [validationHint, setValidationHint] = useState<string | null>(null);
-  const [pipelineHint, setPipelineHint] = useState<string | null>(null);
-  const [cameraQualityHint, setCameraQualityHint] = useState<string | null>(null);
-  const [signalDiagnostics, setSignalDiagnostics] = useState<Record<string, string>>({});
 
   const samplesRef = useRef<CalibrationSample[]>([]);
   const recordingRef = useRef(recording);
@@ -113,6 +100,7 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
 
   useEffect(() => {
     recordingRef.current = recording;
+    if (recording) samplesRef.current = [];
   }, [recording]);
 
   useEffect(() => {
@@ -120,15 +108,6 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
   }, [videoSize]);
 
   useEffect(() => {
-    samplesRef.current = [];
-    lastFaceBoxRef.current = null;
-    lastFaceSeenAtRef.current = 0;
-    lastBlinkDetectedRef.current = false;
-    setError(null);
-    setValidationHint(null);
-    setPipelineHint(null);
-    setCameraQualityHint(null);
-    setSignalDiagnostics({});
     if (!active) {
       setStream(null);
       setStatus("idle");
@@ -147,12 +126,15 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
     try {
       sdk = new SmartSpectraSDK({
         apiKey,
-        requestedMetrics: [
-          ...breathingMetrics,
-          PULSE_RATE_METRIC,
-          HRV_METRIC,
-          ...faceMetrics,
-        ],
+        // HRV_METRIC dropped: it needs SmartSpectra's on-device physiology-inference
+        // model, which is failing to load in this environment ("Unable to resolve
+        // configured model path" at startup) and permanently wedges the native
+        // engine (endless "not in a valid state" frame drops) once requested.
+        // Pulse rate + breathing don't need that model, per the SDK's own
+        // fallback guidance. Re-add HRV_METRIC once the model-load issue
+        // (network/firewall or API key/quota — see SmartSpectra's dashboard) is
+        // resolved.
+        requestedMetrics: [...breathingMetrics, PULSE_RATE_METRIC, ...faceMetrics],
       });
     } catch (err) {
       console.error("Failed to construct SmartSpectraSDK for calibration:", err);
@@ -162,105 +144,16 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
     }
 
     let cancelled = false;
-    let lastMetricsAt = Date.now();
-    let rejectedFrameSince: number | null = null;
-    let recoveryAttempts = 0;
-    let recoveryInProgress = false;
-    let recoveryStartedAt = 0;
-    const diagnostics: Record<string, string> = {};
-
-    const describeCamera = (s: MediaStream) => {
-      const settings = s.getVideoTracks()[0]?.getSettings?.() ?? {};
-      const width = settings.width ?? 0;
-      const height = settings.height ?? 0;
-      const fps = settings.frameRate ?? 0;
-      if ((width > 0 && width < 640) || (height > 0 && height < 480)) {
-        return `Camera resolution is ${width || "?"}×${height || "?"}; use at least 640×480 for reliable pulse and face readings.`;
-      }
-      if (fps > 0 && fps < 15) {
-        return `Camera frame rate is ${Math.round(fps)} fps; use at least 15 fps for reliable pulse and motion readings.`;
-      }
-      return null;
-    };
-
-    const recoverSdk = async (reason: string) => {
-      if (cancelled || recoveryInProgress) return;
-      if (recoveryAttempts >= 1) {
-        setStatus("error");
-        setError(`SmartSpectra stopped accepting camera frames after an automatic restart. ${reason}`);
-        setPipelineHint("The failure is inside the measurement engine, not a lighting or framing warning. Cancel calibration, fully quit Electron, and start it again.");
-        return;
-      }
-      recoveryAttempts += 1;
-      recoveryInProgress = true;
-      recoveryStartedAt = Date.now();
-      setStatus("starting");
-      setError(null);
-      setPipelineHint("The measurement engine stopped accepting frames. Restarting it and reacquiring the camera…");
-      try {
-        await sdk.reset();
-        if (cancelled) return;
-        lastMetricsAt = Date.now();
-        rejectedFrameSince = null;
-        await sdk.start();
-        if (!cancelled) {
-          setError(null);
-          setPipelineHint("Measurement engine restarted. Waiting for validated readings…");
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setStatus("error");
-          setError(`SmartSpectra recovery failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      } finally {
-        recoveryInProgress = false;
-      }
-    };
-    const recordValue = (key: string, record: any, field = "value", positive = false) => {
-      const value = measuredValue(record, field, positive);
-      if (record) diagnostics[key] = value !== undefined
-        ? "Readings are arriving; collecting enough valid samples."
-        : Object.prototype.hasOwnProperty.call(record, "stable") && record.stable === false
-          ? "The SDK is returning readings marked unstable. Hold still and follow the camera guidance."
-          : "The SDK returned a missing or invalid value; waiting for usable readings.";
-      return value;
-    };
-    const lastTimestamps = new Map<string, string>();
-    // Some packets repeat the latest reading. Repeated timestamps must not
-    // count as independent evidence toward the minimum sample count.
-    const fresh = (key: string, readings: any) => {
-      const record = last<any>(readings);
-      if (!record) return undefined;
-      const timestamp = record.timestamp?.toString();
-      if (timestamp && timestamp !== "0") {
-        if (lastTimestamps.get(key) === timestamp) return undefined;
-        lastTimestamps.set(key, timestamp);
-      }
-      return record;
-    };
 
     sdk.on("streamAvailable", (s) => {
       if (cancelled) return;
       setStream(s);
-      setCameraQualityHint(describeCamera(s));
     });
 
     sdk.on("processingStatus", (code) => {
       if (cancelled) return;
       if (code === 3) setStatus("running");
-      else if (code === 5 && !recoveryInProgress) {
-        setPipelineHint("The measurement engine entered an error state. Waiting for its error details…");
-      }
-    });
-
-    sdk.on("validationStatus", (_code, _timestamp, hint) => {
-      if (!cancelled) setValidationHint(hint || null);
-    });
-
-    sdk.on("frameSentThrough", (sent) => {
-      if (cancelled) return;
-      if (sent) rejectedFrameSince = null;
-      else if (rejectedFrameSince === null) rejectedFrameSince = Date.now();
+      else if (code === 5) setStatus("error");
     });
 
     sdk.on("metrics", (buf) => {
@@ -273,7 +166,6 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
         return;
       }
       if (typeof Buffer !== "undefined" && Buffer.isBuffer?.(metrics)) return;
-      lastMetricsAt = Date.now();
 
       // Live face box, used by the readiness check — cheap to compute every
       // message; the render-interval below throttles how often it hits state.
@@ -288,66 +180,47 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
         }
       }
 
-      const blink = fresh("blink", metrics?.face?.blinking);
-      const blinkDetected = blink ? !!blink.detected : lastBlinkDetectedRef.current;
+      const blink = last<any>(metrics?.face?.blinking);
+      const blinkDetected = !!blink?.detected;
       const blinkEdge = blinkDetected && !lastBlinkDetectedRef.current;
       lastBlinkDetectedRef.current = blinkDetected;
 
-      if (recordingRef.current && Date.now() - lastFaceSeenAtRef.current < FACE_HOLD_MS) {
-        const hrv = fresh("hrv", metrics?.cardio?.hrv);
-        const pulse = fresh("pulse", metrics?.cardio?.pulseRate);
-        const breathRate = fresh("breathRate", metrics?.breathing?.rate);
-        const breathAmp = fresh("breathAmp", metrics?.breathing?.amplitude);
-        const eda = fresh("eda", metrics?.eda?.trace);
-        const seat = fresh("seat", metrics?.micromotion?.glutes);
-        const knees = fresh("knees", metrics?.micromotion?.knees);
+      if (recordingRef.current) {
+        const hrv = last<any>(metrics?.cardio?.hrv);
+        const pulse = last<any>(metrics?.cardio?.pulseRate);
+        const breathRate = last<any>(metrics?.breathing?.rate);
+        const breathAmp = last<any>(metrics?.breathing?.amplitude);
+        const eda = last<any>(metrics?.eda?.trace);
+        const seat = last<any>(metrics?.micromotion?.glutes);
+        const knees = last<any>(metrics?.micromotion?.knees);
 
         samplesRef.current.push({
           t: Date.now(),
-          pulse: recordValue("pulse", pulse, "value", true),
-          breathingRate: recordValue("breathingRate", breathRate, "value", true),
-          breathingAmplitude: recordValue("breathingAmplitude", breathAmp),
-          hrvRmssd: recordValue("hrvRmssd", hrv, "rmssd"),
-          hrvSdnn: recordValue("hrvSdnn", hrv, "sdnn"),
-          hrvMeanNn: recordValue("hrvMeanNn", hrv, "meanNn", true),
-          baevsky: recordValue("baevsky", hrv, "baevsky"),
-          eda: recordValue("eda", eda),
-          micromotionSeat: recordValue("seat", seat),
-          micromotionKnees: recordValue("knees", knees),
-          blinkDetected: blink ? blinkEdge : undefined,
+          pulse: pulse?.value ?? undefined,
+          breathingRate: breathRate?.value ?? undefined,
+          breathingAmplitude: breathAmp?.value ?? undefined,
+          hrvRmssd: hrv?.rmssd ?? undefined,
+          hrvSdnn: hrv?.sdnn ?? undefined,
+          hrvMeanNn: hrv?.meanNn ?? undefined,
+          baevsky: hrv?.baevsky ?? undefined,
+          eda: eda?.value ?? undefined,
+          micromotionSeat: seat?.value ?? undefined,
+          micromotionKnees: knees?.value ?? undefined,
+          blinkDetected: blinkEdge,
         });
       }
     });
 
-    sdk.on("error", (code, message, retryable) => {
+    sdk.on("error", (code, message) => {
       if (cancelled) return;
       console.error("SmartSpectra calibration error:", code, message);
-      if ((code === 1 || retryable) && Date.now() - recoveryStartedAt > 5000) {
-        void recoverSdk(message);
-        return;
-      }
       setStatus("error");
       setError(message);
-    });
-
-    const unsubscribeDiagnostics = window.__callbackSmartSpectraDiagnostics?.onMessage(({ message }) => {
-      if (cancelled || !message.includes("dropped frame") || !message.toLowerCase().includes("valid state")) return;
-      // Ignore the old graph's trailing frames while reset/start is settling.
-      if (recoveryInProgress || Date.now() - recoveryStartedAt <= 5000) return;
-      void recoverSdk("The native SDK remained in an invalid state while receiving camera frames.");
     });
 
     const renderInterval = setInterval(() => {
       const freshEnough = Date.now() - lastFaceSeenAtRef.current < FACE_HOLD_MS;
       setFaceBox(freshEnough ? lastFaceBoxRef.current : null);
-      setSignalDiagnostics({ ...diagnostics });
-      if (rejectedFrameSince !== null && Date.now() - rejectedFrameSince > 5000) {
-        setPipelineHint("The measurement engine is rejecting camera frames. Cancel and restart calibration; check the terminal for the first SDK error.");
-      } else if (Date.now() - lastMetricsAt > 15000) {
-        setPipelineHint("No measurement data has arrived for 15 seconds. The SDK may still be initializing or may have stalled.");
-      } else {
-        setPipelineHint(null);
-      }
     }, RENDER_INTERVAL_MS);
 
     setStatus("starting");
@@ -360,11 +233,10 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
     return () => {
       cancelled = true;
       clearInterval(renderInterval);
-      unsubscribeDiagnostics?.();
       sdk.stop().catch(() => {});
       sdk.destroy();
     };
   }, [active]);
 
-  return { stream, status, error, faceBox, samplesRef, validationHint, pipelineHint, cameraQualityHint, signalDiagnostics };
+  return { stream, status, error, faceBox, samplesRef };
 }

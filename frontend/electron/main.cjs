@@ -12,8 +12,8 @@ async function createWindow() {
   // frames. Ported from TestCamera/main.js, where this same call is what
   // makes the SDK actually receive video.
   if (process.platform === "darwin") {
-    // Ask for both camera and microphone — camera for SmartSpectra/preview,
-    // microphone for the Web Speech API voice conversation loop.
+    // Ask for both camera and microphone -- camera for SmartSpectra/preview,
+    // microphone for the voice conversation loop (useConversation.ts).
     const [cameraGranted, micGranted] = await Promise.all([
       systemPreferences.askForMediaAccess("camera"),
       systemPreferences.askForMediaAccess("microphone"),
@@ -46,20 +46,25 @@ async function createWindow() {
   // to a real SDK instance here in the main process, over the MessagePort
   // preload.cjs's bridge sets up. Without this call, the renderer-side SDK
   // throws as soon as it's constructed.
-  // The SDK bridge normally writes frame-pump failures only to the terminal.
-  // Forward those diagnostics to the renderer as well so calibration can
-  // recover from a native kInvalidState instead of waiting forever while
-  // every camera frame is silently discarded.
-  bindSmartSpectraIpc(win, {
-    logger(level, message) {
-      const prefix = "[smartspectra/main]";
-      if (level === "error") console.error(prefix, message);
-      else if (level === "warn") console.warn(prefix, message);
-      else console.log(prefix, message);
-      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-        win.webContents.send("callback:smartspectra-diagnostic", { level, message });
-      }
-    },
+  bindSmartSpectraIpc(win);
+
+  // Firebase's signInWithPopup (Google sign-in) calls window.open() under
+  // the hood. Electron denies every window.open() by default unless a
+  // handler explicitly allows it, so without this the popup silently never
+  // appeared and signInWithPopup would just hang or reject. Only Google's
+  // own OAuth domains are allowed through; everything else stays denied.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    const allowed = url.startsWith("https://accounts.google.com/") || url.includes("/__/auth/");
+    if (!allowed) return { action: "deny" };
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        width: 500,
+        height: 650,
+        autoHideMenuBar: true,
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false },
+      },
+    };
   });
 
   if (isDev) {
@@ -81,10 +86,10 @@ app.whenReady().then(() => {
   // its camera permission prompt. (SmartSpectra's own camera acquisition
   // is covered by askForMediaAccess above, not this — this is for
   // CalibrationSession's plain getUserMedia camera.)
-  // Allow media (camera), microphone, and speech recognition. The Web Speech
-  // API internally uses both the microphone permission and Chromium's speech
-  // recognition service — both must be allowed or it throws "not-allowed" /
-  // "service-not-allowed" before the user even speaks.
+  // Allow media (camera), microphone, and speech recognition. The mic is
+  // used both by getUserMedia (VAD/recording in useConversation.ts) and by
+  // Chromium's internal speech-recognition permission surface -- both need
+  // to be allowed or media capture throws "not-allowed" before anyone speaks.
   const ALLOWED_PERMISSIONS = new Set(["media", "microphone", "speech", "speechRecognition", "audioCapture"]);
 
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
@@ -92,8 +97,8 @@ app.whenReady().then(() => {
   });
 
   // setPermissionCheckHandler is the synchronous gate checked *before* the
-  // async request handler — without it Chromium can deny speech recognition
-  // before it even fires the request callback.
+  // async request handler above -- without it Chromium can deny a
+  // permission before the request callback even fires.
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
     return ALLOWED_PERMISSIONS.has(permission);
   });

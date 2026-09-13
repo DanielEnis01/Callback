@@ -7,10 +7,22 @@ release/
 .vite/
 
 # Local secrets. Keep the safe templates versioned.
+.env
+backend/.env
 .env*
 !.env.example
+backend/firebase-service-account.json
 
 # Local/editor files
 *.log
 *.tsbuildinfo
 .DS_Store
+
+# Python bytecode from the local analysis service
+python/__pycache__/
+__pycache__/
+*.pyc
+
+# Scratch/working notes, not part of the app
+Claude outputs/
+_delete_test_root*.txt
