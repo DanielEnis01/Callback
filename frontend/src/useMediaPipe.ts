@@ -251,7 +251,9 @@ const DEFAULT: MediaPipeData = {
 
 export function buildMediaPipeBaseline(samples: MediaPipeSample[]): MediaPipeBaseline | null {
   const valid = samples.filter(
-    (s) => s.headYaw != null && s.shoulderTiltDeg != null,
+    (s) => [s.headYaw, s.headPitch, s.headRoll, s.shoulderTiltDeg,
+      s.torsoLeanDeg, s.shoulderDistance, s.poseMovementRate]
+      .every((value) => typeof value === "number" && Number.isFinite(value)),
   );
   if (valid.length < 5) return null;
 
@@ -293,10 +295,10 @@ export function useMediaPipe(
 
   useEffect(() => { collectRef.current = collectSamples; }, [collectSamples]);
 
-  // Reset samples when collection starts.
+  // Pausing collection must preserve the readings already collected.
   useEffect(() => {
-    if (collectSamples) samplesRef.current = [];
-  }, [collectSamples]);
+    samplesRef.current = [];
+  }, [active]);
 
   useEffect(() => {
     if (!active) {
@@ -368,6 +370,9 @@ export function useMediaPipe(
 
         let lastFaceTs = 0;
         let lastPoseTs = 0;
+        let lastValidFaceTs = 0;
+        let lastCollectedPoseTs = 0;
+        let lastValidPoseTs = 0;
         let prevKeyLandmarks: LandmarkXYZ[] | null = null;
 
         function loop() {
@@ -388,6 +393,7 @@ export function useMediaPipe(
             try {
               const fr = faceLandmarker.detectForVideo(video, timestamp);
               if (fr.facialTransformationMatrixes?.length) {
+                lastValidFaceTs = now;
                 const mat = fr.facialTransformationMatrixes[0].data;
                 const { yaw, pitch, roll } = eulerFromMatrix(mat);
                 latest.headYaw = yaw;
@@ -403,6 +409,7 @@ export function useMediaPipe(
                   latest.lookingAwaySince = lookingAwayStart;
                 }
               } else {
+                 lastValidFaceTs = 0;
                  latest.lookingAtCamera = false;
                  if (lookingAwayStart == null) lookingAwayStart = Date.now();
                  latest.lookingAwaySince = lookingAwayStart;
@@ -418,6 +425,7 @@ export function useMediaPipe(
             try {
               const pr = poseLandmarker.detectForVideo(video, timestamp);
               if (pr.landmarks?.length && pr.landmarks[0].length >= 25) {
+                lastValidPoseTs = now;
                 // (existing posture extraction)
                 const lm = pr.landmarks[0] as LandmarkXYZ[];
                 const ls = lm[11], rs = lm[12];
@@ -545,6 +553,7 @@ export function useMediaPipe(
                 latest.postureShiftCount = postureShiftCount;
                 latest.postureShiftDetected = lastShiftAt > 0 && now - lastShiftAt < POSTURE_SHIFT_COOLDOWN_MS;
               } else {
+                 lastValidPoseTs = 0;
                  // console.log("[MediaPipe] No pose detected in this frame");
               }
             } catch (err) {
@@ -553,7 +562,9 @@ export function useMediaPipe(
           }
 
           // ── Collect calibration sample ─────────────────────
-          if (collectRef.current) {
+          if (collectRef.current && lastValidPoseTs > lastCollectedPoseTs &&
+              lastValidFaceTs > 0 && now - lastValidFaceTs < 500) {
+            lastCollectedPoseTs = lastValidPoseTs;
             samplesRef.current.push({
               t: Date.now(),
               headYaw: latest.headYaw,
