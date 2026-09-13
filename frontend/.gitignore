@@ -1,0 +1,14 @@
+# Dependencies and generated output
+node_modules/
+dist/
+dist-electron/
+release/
+.cache/
+.vite/
+vite.config.*.timestamp-*
+*.tsbuildinfo
+*.log
+
+# Local keys/configuration. Commit only the template.
+.env*
+!.env.example
