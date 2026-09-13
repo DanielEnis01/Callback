@@ -19,12 +19,12 @@ try {
   assert.ok(written.id);
   assert.equal((await memory.storeMemory(record)).status, "already_synced");
   let result;
-  for (let attempt = 0; attempt < 10; attempt++) {
+  for (let attempt = 0; attempt < 15; attempt++) {
     result = await memory.retrieveMemory({ userId, query: "migration failures" });
     if (result.memories.length) break;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  assert.ok(result.memories.some((item) => item.metadata.externalId === record.metadata.externalId));
+  assert.ok(result.memories.some((item) => item.metadata?.externalId === record.metadata.externalId));
   console.log("Live memory write, search, and retry passed.");
 } finally {
   const assistantId = await store.transaction(userId, (state) => state.assistantId);

@@ -2,15 +2,10 @@ import { useState } from "react";
 import { VoiceOrb } from "./VoiceOrb";
 import { Login } from "./Login";
 import { Dashboard } from "./Dashboard";
-import { BackboardDevPanel } from "./BackboardDevPanel";
 
 export default function App() {
   const [view, setView] = useState<"hero" | "login" | "dashboard">("hero");
   const speaking = false;
-
-  if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("dev") === "backboard") {
-    return <main className="min-h-screen bg-black p-8 text-white"><h1 className="text-2xl font-semibold">Callback developer tools</h1><p className="mt-2 text-sm text-white/45">Test interview memory without a camera, microphone, or login.</p><BackboardDevPanel initialOpen /></main>;
-  }
 
   // Dashboard is a full-screen app on its own — no orb.
   if (view === "dashboard") {

@@ -36,20 +36,9 @@ export const setAuthTokenProvider = (provider: () => Promise<string | null>, use
   authTokenProvider = provider; authenticatedUserId = userId;
   if (typeof window !== "undefined") window.dispatchEvent(new Event("callback-analysis-saved"));
 };
-const resultKey = () => authenticatedUserId ? `callback.latest-analysis:firebase:${authenticatedUserId}`
-  : import.meta.env?.DEV ? `callback.latest-analysis:${getDevUser()}:${getMemoryMode()}` : null;
-export function getDevUser() {
-  let id = localStorage.getItem("callback.dev.user");
-  if (!id) { id = `dev-${crypto.randomUUID()}`; localStorage.setItem("callback.dev.user", id); }
-  return id;
-}
-export function getMemoryMode() { return localStorage.getItem("callback.memory.mode") || "mock"; }
+const resultKey = () => authenticatedUserId ? `callback.latest-analysis:firebase:${authenticatedUserId}` : null;
 export async function interviewHeaders() {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (import.meta.env?.DEV) {
-    headers["X-Callback-Dev-User"] = getDevUser();
-    headers["X-Callback-Memory-Mode"] = getMemoryMode();
-  }
   const token = await authTokenProvider?.();
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;

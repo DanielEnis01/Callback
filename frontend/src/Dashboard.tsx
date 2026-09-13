@@ -22,7 +22,6 @@ import { getBaseline, getInterviewProfile, saveInterviewProfile } from "./baseli
 import { ResumeUpload } from "./ResumeUpload";
 import { getReadyResume, getLatestAnalysis, type ResumeDocument } from "./backboard";
 import { SessionSetup } from "./SessionSetup";
-import { BackboardDevPanel } from "./BackboardDevPanel";
 
 interface DashboardProps {
   onLogout: () => void;
@@ -265,7 +264,6 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
           </div>
         )}
       </main>
-      <BackboardDevPanel />
     </div>
   );
 };

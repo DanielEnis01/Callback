@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "NODE_ENV=development CALLBACK_DEV_TOOLS=1 node --watch src/index.js",
+    "dev": "NODE_ENV=development node --watch src/index.js",
     "start": "node src/index.js",
     "test": "node --test",
     "backboard:smoke": "node scripts/smokeTest.js",

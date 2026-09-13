@@ -78,11 +78,20 @@ export function createBackboardService(client = backboardClient, repository) {
     }
     const assistantId = await assistantFor(userId);
     if (!assistantId) return { memories: [] };
-    // The public API documents query + limit, not metadata predicates.
-    const response = await client.searchMemories(assistantId, query.slice(0, 2000), backboardClient.MAX_MEMORY_SEARCH_RESULTS);
-    const memories = owned(response.memories ?? [], userId, { kind, excludeSessionId })
+    // The search endpoint returns only id, content, score — no metadata.
+    // Hydrate from list so ownership and kind filters work correctly.
+    const [searchResponse, allMemories] = await Promise.all([
+      client.searchMemories(assistantId, query.slice(0, 2000), backboardClient.MAX_MEMORY_SEARCH_RESULTS),
+      listAll(assistantId),
+    ]);
+    const metadataById = new Map(allMemories.map((m) => [m.id || m.memory_id, m.metadata]));
+    const hydrated = (searchResponse.memories ?? []).map((m) => ({
+      ...m,
+      metadata: metadataById.get(m.id || m.memory_id) ?? m.metadata,
+    }));
+    const memories = owned(hydrated, userId, { kind, excludeSessionId })
       .filter((memory) => !weakOnly || (Number.isFinite(memory.metadata.answerScores?.starScore) && memory.metadata.answerScores.starScore < 3));
-    return { memories: memories.slice(0, limit), filtering: "client_after_tenant_search", candidates: response.memories?.length ?? 0 };
+    return { memories: memories.slice(0, limit), filtering: "client_after_tenant_search", candidates: searchResponse.memories?.length ?? 0 };
   }
   async function recentNotes(userId, limit = 3) {
     const assistantId = await assistantFor(userId);

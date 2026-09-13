@@ -5,7 +5,6 @@ import { CameraFeed } from "./CameraFeed";
 import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
 import { useConversation } from "./useConversation";
-import { DevPanel } from "./DevPanel";
 import { completeInterview, prepareInterview, type PreparedInterview } from "./backboard";
 import { getInterviewProfile, getSessionContext } from "./baselineStore";
 
@@ -293,8 +292,6 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
         </button>
       </footer>
 
-      {/* Dev tools — only visible in Vite dev mode */}
-      <DevPanel conversation={conversation} />
     </div>
   );
 };
