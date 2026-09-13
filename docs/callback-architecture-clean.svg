@@ -1,0 +1,197 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Callback system architecture</title>
+  <desc id="desc">A clean left-to-right architecture diagram showing capture, orchestration, intelligence, storage, results, and the learning loop.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#050608"/>
+      <stop offset="1" stop-color="#0b0d12"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#000" flood-opacity="0.38"/>
+    </filter>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#65bfff"/></marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#89d06f"/></marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#b78cff"/></marker>
+    <marker id="arrowGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#b9c0cc"/></marker>
+    <style>
+      text{font-family:Arial,Helvetica,sans-serif}.title{font-size:48px;font-weight:700;fill:#f7f8fa}.sub{font-size:20px;font-weight:400;fill:#9da5b4}.stage{font-size:15px;font-weight:700;letter-spacing:2.6px;fill:#6f7888}.card{fill:#11141a;stroke:#2a303b;stroke-width:2}.card-title{font-size:25px;font-weight:700;fill:#f7f8fa}.card-sub{font-size:13px;font-weight:600;letter-spacing:1.4px;fill:#778191}.body{font-size:17px;font-weight:400;fill:#c5cad3}.small{font-size:14px;font-weight:400;fill:#98a1af}.label{font-size:14px;font-weight:600;fill:#d9dde4}.pill{font-size:13px;font-weight:600;fill:#dbe0e8}.flow{fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}.blue{stroke:#65bfff}.green{stroke:#89d06f}.purple{stroke:#b78cff}.gray{stroke:#b9c0cc}.dash{stroke-dasharray:11 11}.accent-blue{fill:#65bfff}.accent-green{fill:#89d06f}.accent-purple{fill:#b78cff}.accent-amber{fill:#f2a93b}
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <text id="diagram-title" x="72" y="82" class="title">Callback — System Architecture</text>
+  <text x="72" y="118" class="sub">A personalized interview → multimodal measurement → feedback → a smarter next session</text>
+
+  <text x="72" y="177" class="stage">1 · EXPERIENCE &amp; CAPTURE</text>
+  <text x="525" y="177" class="stage">2 · ORCHESTRATION</text>
+  <text x="865" y="177" class="stage">3 · INTELLIGENCE</text>
+  <text x="1250" y="177" class="stage">4 · MEMORY &amp; METRICS</text>
+  <text x="1625" y="177" class="stage">5 · COACHING</text>
+
+  <!-- Experience and capture -->
+  <g filter="url(#shadow)">
+    <rect x="72" y="205" width="390" height="590" rx="18" class="card"/>
+    <rect x="72" y="205" width="7" height="590" rx="3" class="accent-blue"/>
+  </g>
+  <text x="105" y="248" class="card-title">Electron desktop app</text>
+  <text x="105" y="277" class="card-sub">REACT · VITE · FIREBASE AUTH</text>
+  <text x="105" y="318" class="body">Résumé + job posting</text>
+  <text x="105" y="344" class="small">Session setup and optional practice target</text>
+
+  <rect x="105" y="380" width="324" height="105" rx="12" fill="#0a0c10" stroke="#343b47"/>
+  <circle cx="130" cy="413" r="7" class="accent-amber"/>
+  <text x="150" y="420" class="label">Camera</text>
+  <text x="130" y="451" class="small">Presage: pulse · stress · emotion</text>
+  <text x="130" y="473" class="small">MediaPipe: gaze · blink · posture</text>
+
+  <rect x="105" y="505" width="324" height="105" rx="12" fill="#0a0c10" stroke="#343b47"/>
+  <circle cx="130" cy="538" r="7" class="accent-blue"/>
+  <text x="150" y="545" class="label">Microphone + speakers</text>
+  <text x="130" y="576" class="small">Voice activity detection</text>
+  <text x="130" y="598" class="small">Recruiter audio + candidate speech</text>
+
+  <rect x="105" y="630" width="324" height="130" rx="12" fill="#0a0c10" stroke="#343b47"/>
+  <text x="130" y="666" class="label">Live interview interface</text>
+  <text x="130" y="697" class="small">Camera view · recruiter orb</text>
+  <text x="130" y="721" class="small">Question type · focused monitor</text>
+  <text x="130" y="745" class="small">Four-question session</text>
+
+  <!-- API -->
+  <g filter="url(#shadow)">
+    <rect x="525" y="270" width="280" height="455" rx="18" class="card"/>
+    <rect x="525" y="270" width="7" height="455" rx="3" fill="#f7f8fa"/>
+  </g>
+  <text x="558" y="315" class="card-title">Node / Express</text>
+  <text x="558" y="344" class="card-sub">API + ORCHESTRATION</text>
+  <text x="558" y="390" class="body">Verifies Firebase ID token</text>
+  <text x="558" y="421" class="body">Coordinates every service</text>
+  <text x="558" y="452" class="body">Owns session lifecycle</text>
+  <line x1="558" y1="480" x2="772" y2="480" stroke="#2f3540"/>
+  <text x="558" y="516" class="small">Plan · turn · analysis</text>
+  <text x="558" y="542" class="small">Metrics · documents · trends</text>
+  <text x="558" y="568" class="small">Retry · queue · fallbacks</text>
+  <rect x="558" y="610" width="214" height="72" rx="10" fill="#171b22" stroke="#39414e"/>
+  <text x="575" y="640" class="label">Graceful degradation</text>
+  <text x="575" y="663" class="small">Missing ≠ zero; session survives</text>
+
+  <!-- Intelligence -->
+  <g filter="url(#shadow)">
+    <rect x="865" y="205" width="325" height="355" rx="18" class="card"/>
+    <rect x="865" y="205" width="7" height="355" rx="3" class="accent-purple"/>
+  </g>
+  <text x="898" y="249" class="card-title">Gemini</text>
+  <text x="898" y="278" class="card-sub">REASONING CORE</text>
+  <rect x="898" y="310" width="259" height="54" rx="10" fill="#191720" stroke="#413654"/>
+  <text x="916" y="343" class="label">BEFORE · designs 4 questions</text>
+  <rect x="898" y="380" width="259" height="54" rx="10" fill="#191720" stroke="#413654"/>
+  <text x="916" y="413" class="label">DURING · runs the interview</text>
+  <rect x="898" y="450" width="259" height="78" rx="10" fill="#191720" stroke="#413654"/>
+  <text x="916" y="482" class="label">AFTER · critiques each answer</text>
+  <text x="916" y="506" class="small">Strengths · weaknesses · progress</text>
+
+  <g filter="url(#shadow)">
+    <rect x="865" y="590" width="325" height="205" rx="18" class="card"/>
+    <rect x="865" y="590" width="7" height="205" rx="3" class="accent-green"/>
+  </g>
+  <text x="898" y="634" class="card-title">Python analysis</text>
+  <text x="898" y="663" class="card-sub">DETERMINISTIC TRANSCRIPT SIGNALS</text>
+  <text x="898" y="705" class="body">STAR · filler · hedging</text>
+  <text x="898" y="734" class="body">specificity · tangents · non-answers</text>
+  <text x="898" y="767" class="small">Stdlib child service; no model call</text>
+
+  <!-- Persistence -->
+  <g filter="url(#shadow)">
+    <rect x="1250" y="205" width="315" height="275" rx="18" class="card"/>
+    <rect x="1250" y="205" width="7" height="275" rx="3" class="accent-green"/>
+  </g>
+  <text x="1283" y="249" class="card-title">Tiger Data</text>
+  <text x="1283" y="278" class="card-sub">POSTGRES + TIMESCALEDB</text>
+  <text x="1283" y="322" class="body">Owns the numbers</text>
+  <text x="1283" y="353" class="small">Sessions · PDFs · interview plans</text>
+  <text x="1283" y="378" class="small">Per-second metrics · results</text>
+  <text x="1283" y="403" class="small">Traits · trends · goals</text>
+  <rect x="1283" y="430" width="177" height="30" rx="15" fill="#172116"/>
+  <text x="1299" y="450" class="pill">“How did it change?”</text>
+
+  <g filter="url(#shadow)">
+    <rect x="1250" y="520" width="315" height="275" rx="18" class="card"/>
+    <rect x="1250" y="520" width="7" height="275" rx="3" class="accent-purple"/>
+  </g>
+  <text x="1283" y="564" class="card-title">Backboard</text>
+  <text x="1283" y="593" class="card-sub">SEMANTIC MEMORY</text>
+  <text x="1283" y="637" class="body">Owns the language</text>
+  <text x="1283" y="668" class="small">Question + answer memories</text>
+  <text x="1283" y="693" class="small">Critiques · session notes</text>
+  <text x="1283" y="718" class="small">Similar past answers</text>
+  <rect x="1283" y="745" width="225" height="30" rx="15" fill="#20182a"/>
+  <text x="1299" y="765" class="pill">“What did I say before?”</text>
+
+  <!-- Coaching -->
+  <g filter="url(#shadow)">
+    <rect x="1625" y="270" width="223" height="455" rx="18" class="card"/>
+    <rect x="1625" y="270" width="7" height="455" rx="3" class="accent-blue"/>
+  </g>
+  <text x="1658" y="315" class="card-title">Results</text>
+  <text x="1658" y="344" class="card-sub">ACTIONABLE COACHING</text>
+  <text x="1658" y="391" class="body">Per-question critique</text>
+  <text x="1658" y="422" class="body">Concrete fix</text>
+  <text x="1658" y="453" class="body">Up to 23 traits</text>
+  <text x="1658" y="484" class="body">0–10 normalized scores</text>
+  <text x="1658" y="515" class="body">Cross-session trends</text>
+  <line x1="1658" y1="545" x2="1815" y2="545" stroke="#2f3540"/>
+  <rect x="1658" y="579" width="157" height="58" rx="10" fill="#f7f8fa"/>
+  <text x="1683" y="615" style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;fill:#07080a">Practice this</text>
+  <text x="1658" y="671" class="small">One weakness becomes</text>
+  <text x="1658" y="695" class="small">the next session’s focus.</text>
+
+  <!-- Core arrows: every box participates in a clear flow -->
+  <path d="M462 410 H521" class="flow blue" marker-end="url(#arrowBlue)"/>
+  <polygon points="521,410 507,402 507,418" class="accent-blue"/>
+
+  <path d="M805 365 H845" class="flow purple" marker-end="url(#arrowPurple)"/>
+  <polygon points="845,365 831,357 831,373" class="accent-purple"/>
+
+  <path d="M805 655 H845" class="flow green" marker-end="url(#arrowGreen)"/>
+  <polygon points="845,655 831,647 831,663" class="accent-green"/>
+
+  <path d="M1190 342 H1245" class="flow green" marker-end="url(#arrowGreen)"/>
+  <polygon points="1245,342 1231,334 1231,350" class="accent-green"/>
+  <path d="M1190 720 H1215 Q1230 720 1230 705 V465 Q1230 450 1245 450" class="flow green" marker-end="url(#arrowGreen)"/>
+  <polygon points="1245,450 1231,442 1231,458" class="accent-green"/>
+
+  <path d="M1190 390 H1212 Q1230 390 1230 408 V632 Q1230 650 1248 650" class="flow purple"/>
+  <polygon points="1248,650 1234,642 1234,658" class="accent-purple"/>
+  <path d="M1250 650 H1212 Q1190 650 1190 620" class="flow purple" marker-end="url(#arrowPurple)"/>
+  <polygon points="1190,620 1182,634 1198,634" class="accent-purple"/>
+
+  <path d="M1565 342 H1620" class="flow green" marker-end="url(#arrowGreen)"/>
+  <polygon points="1620,342 1606,334 1606,350" class="accent-green"/>
+  <path d="M1565 656 H1585 Q1605 656 1605 636 H1620" class="flow purple" marker-end="url(#arrowPurple)"/>
+  <polygon points="1620,636 1606,628 1606,644" class="accent-purple"/>
+
+  <!-- Voice loop, separated visually from intelligence/storage -->
+  <rect x="542" y="820" width="646" height="78" rx="16" fill="#0c1218" stroke="#27465b" stroke-width="2"/>
+  <text x="572" y="850" class="label">ElevenLabs voice loop</text>
+  <text x="572" y="878" class="small">Candidate audio → speech-to-text · recruiter text → spoken response</text>
+  <path d="M280 795 V842 Q280 859 297 859 H536" class="flow blue" marker-end="url(#arrowBlue)"/>
+  <polygon points="536,859 522,851 522,867" class="accent-blue"/>
+  <path d="M1188 859 H1205 Q1222 859 1222 842 V500 Q1222 483 1205 483 H1190" class="flow blue" marker-end="url(#arrowBlue)"/>
+  <polygon points="1190,483 1204,475 1204,491" class="accent-blue"/>
+
+  <!-- Learning loop -->
+  <path d="M1737 725 V937 Q1737 964 1710 964 H280 Q253 964 253 937 V797" class="flow blue dash" marker-end="url(#arrowBlue)"/>
+  <polygon points="253,797 245,811 261,811" class="accent-blue"/>
+  <rect x="735" y="930" width="450" height="70" rx="35" fill="#111923" stroke="#315b78" stroke-width="2"/>
+  <text x="788" y="958" class="label">THE LEARNING LOOP</text>
+  <text x="788" y="984" class="small">Results shape the next interview; progress becomes measurable.</text>
+
+  <!-- Compact legend -->
+  <line x1="73" y1="1038" x2="113" y2="1038" class="flow blue"/>
+  <text x="125" y="1044" class="small">live voice / capture</text>
+  <line x1="330" y1="1038" x2="370" y2="1038" class="flow purple"/>
+  <text x="382" y="1044" class="small">language / reasoning</text>
+  <line x1="607" y1="1038" x2="647" y2="1038" class="flow green"/>
+  <text x="659" y="1044" class="small">numbers / deterministic analysis</text>
+  <line x1="1015" y1="1038" x2="1055" y2="1038" class="flow blue dash"/>
+  <text x="1067" y="1044" class="small">feedback into the next session</text>
+</svg>

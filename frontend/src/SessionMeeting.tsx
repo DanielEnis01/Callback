@@ -11,6 +11,7 @@ import { dataRequest, analyzeSessionTranscript } from "./dataApi";
 import { SessionRecorder, type MetricValues } from "./sessionRecorder";
 import { remoteStorageEnabled, getSessionContext } from "./baselineStore";
 import { staticDataRequest } from "./staticSessionStore";
+import { liveMonitorKeysForTarget, type LiveMetricKey } from "./liveTraitMonitors";
 
 interface SessionMeetingProps {
   onEnd: () => void;
@@ -195,9 +196,14 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const stressDisplay = status === "error" ? "Unavailable" : stress ?? "Not tracked";
 
   const recentHistory = statsRef.current.recentLookHistory;
-  const eyeContactPct = recentHistory.length > 0 
+  const eyeContactPct = recentHistory.length > 0
     ? Math.round((recentHistory.filter(Boolean).length / recentHistory.length) * 100)
-    : 100;
+    : null;
+  const eyeContactValue = eyeContactPct != null
+    ? `${eyeContactPct}%`
+    : mediaPipe.status === "error"
+      ? "Unavailable"
+      : "Calibrating…";
 
   const postureValue = mediaPipe.isFidgeting
     ? "Fidgeting"
@@ -206,10 +212,10 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
       : "Steady";
 
   // Every live signal we can actually show, keyed by tile label.
-  const ALL_METRICS: Record<string, { label: string; value: string }> = {
+  const ALL_METRICS: Record<LiveMetricKey, { label: string; value: string }> = {
     Emotion: { label: "Emotion", value: emotion ?? pending },
     Pulse: { label: "Pulse", value: pulseBpm ? `${pulseBpm} bpm` : pending },
-    "Eye Contact": { label: "Eye Contact", value: `${eyeContactPct}%` },
+    "Eye Contact": { label: "Eye Contact", value: eyeContactValue },
     Posture: { label: "Posture", value: postureValue },
     Stress: { label: "Stress", value: stressDisplay },
   };
@@ -220,19 +226,8 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   // fact, so there is nothing honest to display live for them. Showing a
   // pulse readout while someone practises Answer Structure is noise wearing
   // the costume of feedback.
-  const TRAIT_MONITORS: Record<string, string[]> = {
-    "Eye Contact": ["Eye Contact"],
-    "Posture Stability": ["Posture"],
-    "Body Language": ["Posture", "Eye Contact"],
-    Composure: ["Stress", "Emotion"],
-    "Emotional Steadiness": ["Emotion", "Stress"],
-    "Stress Recovery": ["Stress", "Pulse"],
-    "Breathing Steadiness": ["Pulse"],
-    "Positive Presence": ["Emotion"],
-  };
-
   const practiceTarget = getSessionContext()?.targetWeakness ?? null;
-  const trackedTiles = practiceTarget ? TRAIT_MONITORS[practiceTarget] ?? null : null;
+  const trackedTiles = liveMonitorKeysForTarget(practiceTarget);
   // A generic session shows NO live tiles. Every signal is still captured and
   // scored exactly as before -- this is purely about what is on screen. With
   // nothing being practised there is no number the user should be watching,

@@ -1,0 +1,231 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440" role="img" aria-labelledby="title desc">
+  <title id="title">Callback detailed system architecture</title>
+  <desc id="desc">Detailed component architecture showing the Electron interface, camera and microphone inputs, Presage, MediaPipe, ElevenLabs, Firebase, Node and Express, Gemini lifecycle services, Python analysis, Tiger Data, Backboard, results, and the next-session learning loop.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#050608"/><stop offset="1" stop-color="#0b0e14"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+    <style>
+      text{font-family:Arial,Helvetica,sans-serif}.headline{font-size:50px;font-weight:700;fill:#f7f8fa}.subtitle{font-size:21px;fill:#a1a9b7}.stage{font-size:15px;font-weight:700;letter-spacing:2.5px;fill:#737d8e}.group{fill:#0b0e13;stroke:#252b35;stroke-width:2}.node{fill:#13171e;stroke:#303744;stroke-width:2}.nodeTitle{font-size:23px;font-weight:700;fill:#f7f8fa}.nodeTech{font-size:13px;font-weight:700;letter-spacing:1.4px;fill:#7f8999}.nodeBody{font-size:15px;fill:#c8ced8}.nodeSmall{font-size:13px;fill:#9aa4b3}.hubTitle{font-size:31px;font-weight:700;fill:#ffffff}.flow{fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}.blue{stroke:#5ec0ff}.amber{stroke:#f5ad42}.purple{stroke:#b486ff}.green{stroke:#8bd56e}.white{stroke:#e8ebf0}.dashed{stroke-dasharray:12 12}.blueFill{fill:#5ec0ff}.amberFill{fill:#f5ad42}.purpleFill{fill:#b486ff}.greenFill{fill:#8bd56e}.whiteFill{fill:#e8ebf0}.pill{fill:#1a2029;stroke:#35404e}.pillText{font-size:13px;font-weight:700;fill:#dce2eb}.edgeLabel{font-size:13px;font-weight:600;fill:#a7b0be}
+    </style>
+  </defs>
+
+  <rect width="2560" height="1440" fill="url(#background)"/>
+  <text x="70" y="78" class="headline">Callback — Detailed System Architecture</text>
+  <text x="70" y="116" class="subtitle">Every input has a destination. Every service returns to one orchestrated coaching loop.</text>
+
+  <text x="70" y="174" class="stage">1 · USER’S MACHINE</text>
+  <text x="700" y="174" class="stage">2 · SIGNAL &amp; VOICE SERVICES</text>
+  <text x="1190" y="174" class="stage">3 · BACKEND ORCHESTRATION</text>
+  <text x="1690" y="174" class="stage">4 · INTELLIGENCE</text>
+  <text x="2140" y="174" class="stage">5 · PERSISTENCE</text>
+
+  <!-- User machine -->
+  <rect x="70" y="202" width="550" height="830" rx="22" class="group"/>
+  <rect x="70" y="202" width="7" height="830" rx="3" class="blueFill"/>
+
+  <g filter="url(#shadow)">
+    <rect x="110" y="245" width="470" height="170" rx="16" class="node"/>
+  </g>
+  <text x="140" y="286" class="nodeTitle">Electron + React interface</text>
+  <text x="140" y="313" class="nodeTech">VITE DESKTOP CLIENT</text>
+  <text x="140" y="349" class="nodeBody">Collects résumé, job posting, and practice target.</text>
+  <text x="140" y="376" class="nodeSmall">Shows preflight, interview, Results, Dashboard, and Trends.</text>
+
+  <g filter="url(#shadow)"><rect x="110" y="445" width="470" height="105" rx="16" class="node"/></g>
+  <circle cx="140" cy="479" r="7" class="amberFill"/>
+  <text x="158" y="486" class="nodeTitle">Camera feed</text>
+  <text x="140" y="521" class="nodeBody">Raw frames · user-relative visual baseline</text>
+
+  <g filter="url(#shadow)"><rect x="110" y="575" width="470" height="105" rx="16" class="node"/></g>
+  <circle cx="140" cy="609" r="7" class="blueFill"/>
+  <text x="158" y="616" class="nodeTitle">Microphone</text>
+  <text x="140" y="651" class="nodeBody">Web audio + VAD · detects the answer boundary</text>
+
+  <g filter="url(#shadow)"><rect x="110" y="705" width="470" height="120" rx="16" class="node"/></g>
+  <text x="140" y="744" class="nodeTitle">Preflight framing check</text>
+  <text x="140" y="778" class="nodeBody">Confirms face and chest are visible; captures neutral posture.</text>
+  <text x="140" y="803" class="nodeSmall">Runs before each interview—no separate calibration detour.</text>
+
+  <g filter="url(#shadow)"><rect x="110" y="850" width="470" height="145" rx="16" class="node"/></g>
+  <text x="140" y="890" class="nodeTitle">Live session recorder</text>
+  <text x="140" y="924" class="nodeBody">Timestamps signals, queues samples, and retries writes.</text>
+  <text x="140" y="950" class="nodeSmall">The UI shows only the chosen live coaching target.</text>
+  <rect x="140" y="965" width="220" height="24" rx="12" class="pill"/>
+  <text x="154" y="982" class="pillText">missing signal ≠ zero</text>
+
+  <!-- Signal and voice services: individually addressable -->
+  <g filter="url(#shadow)"><rect x="700" y="225" width="410" height="165" rx="18" class="node"/></g>
+  <rect x="700" y="225" width="7" height="165" rx="3" class="amberFill"/>
+  <text x="735" y="266" class="nodeTitle">Presage SmartSpectra</text>
+  <text x="735" y="293" class="nodeTech">NATIVE SDK · ELECTRON MAIN PROCESS</text>
+  <text x="735" y="329" class="nodeBody">Reads contact-free vitals from camera frames.</text>
+  <text x="735" y="355" class="nodeSmall">Pulse · stress index · emotional signal</text>
+
+  <g filter="url(#shadow)"><rect x="700" y="425" width="410" height="165" rx="18" class="node"/></g>
+  <rect x="700" y="425" width="7" height="165" rx="3" class="amberFill"/>
+  <text x="735" y="466" class="nodeTitle">MediaPipe Face + Pose</text>
+  <text x="735" y="493" class="nodeTech">IN-RENDERER MODEL · 468 LANDMARKS</text>
+  <text x="735" y="529" class="nodeBody">Compares motion with the neutral baseline.</text>
+  <text x="735" y="555" class="nodeSmall">Gaze · eye contact · blink · posture · fidgeting</text>
+
+  <g filter="url(#shadow)"><rect x="700" y="625" width="410" height="165" rx="18" class="node"/></g>
+  <rect x="700" y="625" width="7" height="165" rx="3" class="blueFill"/>
+  <text x="735" y="666" class="nodeTitle">ElevenLabs</text>
+  <text x="735" y="693" class="nodeTech">SCRIBE STT + STREAMING TTS</text>
+  <text x="735" y="729" class="nodeBody">Turns answers into text and recruiter text into voice.</text>
+  <text x="735" y="755" class="nodeSmall">Keeps the experience conversational instead of chat-based.</text>
+
+  <g filter="url(#shadow)"><rect x="700" y="825" width="410" height="165" rx="18" class="node"/></g>
+  <rect x="700" y="825" width="7" height="165" rx="3" class="greenFill"/>
+  <text x="735" y="866" class="nodeTitle">Python analysis service</text>
+  <text x="735" y="893" class="nodeTech">SPAWNED CHILD · STANDARD LIBRARY</text>
+  <text x="735" y="929" class="nodeBody">Deterministic checks on the final transcript.</text>
+  <text x="735" y="955" class="nodeSmall">STAR · filler · hedging · tangents · non-answers</text>
+
+  <!-- Central orchestrator -->
+  <g filter="url(#shadow)"><rect x="1190" y="260" width="420" height="700" rx="22" class="node"/></g>
+  <rect x="1190" y="260" width="8" height="700" rx="4" class="whiteFill"/>
+  <text x="1230" y="315" class="hubTitle">Node / Express</text>
+  <text x="1230" y="346" class="nodeTech">API + SESSION ORCHESTRATOR</text>
+
+  <rect x="1230" y="385" width="340" height="100" rx="14" fill="#0c0f14" stroke="#333b47"/>
+  <text x="1255" y="419" class="nodeTitle">Firebase Auth gate</text>
+  <text x="1255" y="449" class="nodeBody">Verifies ID tokens server-side.</text>
+  <text x="1255" y="474" class="nodeSmall">Every route is scoped to one user.</text>
+
+  <text x="1230" y="535" class="nodeBody">Starts and closes the session</text>
+  <text x="1230" y="572" class="nodeBody">Builds and advances the question plan</text>
+  <text x="1230" y="609" class="nodeBody">Routes voice, transcript, and metrics</text>
+  <text x="1230" y="646" class="nodeBody">Combines AI + deterministic analysis</text>
+  <text x="1230" y="683" class="nodeBody">Stores results and memory safely</text>
+
+  <line x1="1230" y1="726" x2="1570" y2="726" stroke="#333a46" stroke-width="2"/>
+  <text x="1230" y="767" class="nodeTech">FAILURE POSTURE</text>
+  <text x="1230" y="802" class="nodeSmall">Gemini model fallback chain</text>
+  <text x="1230" y="830" class="nodeSmall">Queued metric writes with retry</text>
+  <text x="1230" y="858" class="nodeSmall">Backboard outage does not stop interview</text>
+  <text x="1230" y="886" class="nodeSmall">Unrecorded signals remain absent</text>
+  <rect x="1230" y="905" width="264" height="28" rx="14" class="pill"/>
+  <text x="1246" y="925" class="pillText">everything degrades; nothing invents</text>
+
+  <!-- Gemini lifecycle as separate nodes -->
+  <g filter="url(#shadow)"><rect x="1690" y="225" width="360" height="190" rx="18" class="node"/></g>
+  <rect x="1690" y="225" width="7" height="190" rx="3" class="purpleFill"/>
+  <text x="1725" y="266" class="nodeTitle">Gemini · Planner</text>
+  <text x="1725" y="293" class="nodeTech">BEFORE THE INTERVIEW</text>
+  <text x="1725" y="329" class="nodeBody">Reads the job posting + original résumé PDF.</text>
+  <text x="1725" y="355" class="nodeSmall">Creates exactly four candidate-specific questions.</text>
+  <text x="1725" y="380" class="nodeSmall">Can revisit a weak prior answer or target one trait.</text>
+
+  <g filter="url(#shadow)"><rect x="1690" y="455" width="360" height="190" rx="18" class="node"/></g>
+  <rect x="1690" y="455" width="7" height="190" rx="3" class="purpleFill"/>
+  <text x="1725" y="496" class="nodeTitle">Gemini · Recruiter</text>
+  <text x="1725" y="523" class="nodeTech">DURING THE INTERVIEW</text>
+  <text x="1725" y="559" class="nodeBody">Asks the next planned question or one clarification.</text>
+  <text x="1725" y="585" class="nodeSmall">Tracks plan state and closes after question four.</text>
+  <text x="1725" y="610" class="nodeSmall">Response text is sent to ElevenLabs for voice.</text>
+
+  <g filter="url(#shadow)"><rect x="1690" y="685" width="360" height="230" rx="18" class="node"/></g>
+  <rect x="1690" y="685" width="7" height="230" rx="3" class="purpleFill"/>
+  <text x="1725" y="726" class="nodeTitle">Gemini · Reviewer</text>
+  <text x="1725" y="753" class="nodeTech">AFTER THE INTERVIEW</text>
+  <text x="1725" y="789" class="nodeBody">Reviews the complete transcript + recorded signals.</text>
+  <text x="1725" y="815" class="nodeSmall">Per-question rating · critique · concrete fix</text>
+  <text x="1725" y="840" class="nodeSmall">Strengths · weaknesses · session title</text>
+  <text x="1725" y="865" class="nodeSmall">Progress note against a similar past answer</text>
+
+  <!-- Persistence nodes -->
+  <g filter="url(#shadow)"><rect x="2140" y="260" width="350" height="300" rx="20" class="node"/></g>
+  <rect x="2140" y="260" width="7" height="300" rx="3" class="greenFill"/>
+  <text x="2175" y="305" class="nodeTitle">Tiger Data</text>
+  <text x="2175" y="332" class="nodeTech">POSTGRES + TIMESCALEDB</text>
+  <text x="2175" y="372" class="nodeBody">Structured source of truth</text>
+  <text x="2175" y="408" class="nodeSmall">Résumés + original PDFs</text>
+  <text x="2175" y="434" class="nodeSmall">Sessions + four-question plans</text>
+  <text x="2175" y="460" class="nodeSmall">Per-second signal hypertable</text>
+  <text x="2175" y="486" class="nodeSmall">Scores · traits · trends · goals</text>
+  <rect x="2175" y="510" width="197" height="28" rx="14" fill="#172416"/>
+  <text x="2191" y="530" class="pillText">“How did it change?”</text>
+
+  <g filter="url(#shadow)"><rect x="2140" y="610" width="350" height="305" rx="20" class="node"/></g>
+  <rect x="2140" y="610" width="7" height="305" rx="3" class="purpleFill"/>
+  <text x="2175" y="655" class="nodeTitle">Backboard</text>
+  <text x="2175" y="682" class="nodeTech">SEMANTIC MEMORY</text>
+  <text x="2175" y="722" class="nodeBody">Language memory for one user</text>
+  <text x="2175" y="758" class="nodeSmall">Question + answer embedded together</text>
+  <text x="2175" y="784" class="nodeSmall">Critique + advice for that answer</text>
+  <text x="2175" y="810" class="nodeSmall">Session notes + trait snapshot</text>
+  <text x="2175" y="836" class="nodeSmall">Retrieves semantically similar stories</text>
+  <rect x="2175" y="861" width="232" height="28" rx="14" fill="#251a31"/>
+  <text x="2191" y="881" class="pillText">“What did I say before?”</text>
+
+  <!-- Input arrows -->
+  <path d="M580 497 H655 Q675 497 675 310 H694" class="flow amber"/>
+  <polygon points="694,310 678,301 678,319" class="amberFill"/>
+  <path d="M580 517 H642 Q660 517 660 508 H694" class="flow amber"/>
+  <polygon points="694,508 678,499 678,517" class="amberFill"/>
+  <path d="M580 627 H650 Q675 627 675 708 H694" class="flow blue"/>
+  <polygon points="694,708 678,699 678,717" class="blueFill"/>
+
+  <!-- Client and service arrows into the orchestrator -->
+  <path d="M580 300 H640 Q660 300 660 205 H1145 Q1165 205 1165 380 H1184" class="flow white"/>
+  <polygon points="1184,380 1168,371 1168,389" class="whiteFill"/>
+  <path d="M1110 307 H1140 Q1160 307 1160 515 H1184" class="flow amber"/>
+  <polygon points="1184,515 1168,506 1168,524" class="amberFill"/>
+  <path d="M1110 507 H1144 Q1164 507 1164 590 H1184" class="flow amber"/>
+  <polygon points="1184,590 1168,581 1168,599" class="amberFill"/>
+  <path d="M1110 708 H1148 Q1168 708 1168 665 H1184" class="flow blue"/>
+  <polygon points="1184,665 1168,656 1168,674" class="blueFill"/>
+  <path d="M1184 900 H1125" class="flow green"/>
+  <polygon points="1125,900 1141,891 1141,909" class="greenFill"/>
+  <path d="M1110 944 H1148 Q1168 944 1168 925 H1184" class="flow green"/>
+  <polygon points="1184,925 1168,916 1168,934" class="greenFill"/>
+
+  <!-- API to Gemini lifecycle; bidirectional means request + structured response -->
+  <path d="M1610 320 H1684" class="flow purple"/>
+  <polygon points="1684,320 1668,311 1668,329" class="purpleFill"/><polygon points="1610,320 1626,311 1626,329" class="purpleFill"/>
+  <path d="M1610 550 H1684" class="flow purple"/>
+  <polygon points="1684,550 1668,541 1668,559" class="purpleFill"/><polygon points="1610,550 1626,541 1626,559" class="purpleFill"/>
+  <path d="M1610 800 H1684" class="flow purple"/>
+  <polygon points="1684,800 1668,791 1668,809" class="purpleFill"/><polygon points="1610,800 1626,791 1626,809" class="purpleFill"/>
+
+  <!-- Orchestrator to persistence, routed above/below intelligence to stay legible -->
+  <path d="M1400 260 V205 H2315 V254" class="flow green"/>
+  <polygon points="2315,254 2306,238 2324,238" class="greenFill"/>
+  <text x="1760" y="198" class="edgeLabel">sessions · plans · metrics · analysis results</text>
+
+  <path d="M1610 900 V1010 H2315 V921" class="flow purple"/>
+  <polygon points="2315,921 2306,937 2324,937" class="purpleFill"/>
+  <text x="1785" y="1001" class="edgeLabel">store Q&amp;A + coaching notes · retrieve similar past answers</text>
+
+  <!-- Results and closed learning loop -->
+  <g filter="url(#shadow)"><rect x="450" y="1090" width="1660" height="235" rx="24" class="node"/></g>
+  <rect x="450" y="1090" width="8" height="235" rx="4" class="blueFill"/>
+  <text x="495" y="1140" class="hubTitle">Results → Practice this → Next interview</text>
+  <text x="495" y="1176" class="nodeBody">Per-question critique and fix</text>
+  <text x="830" y="1176" class="nodeBody">Up to 23 normalized traits</text>
+  <text x="1190" y="1176" class="nodeBody">Dashboard + per-trait trends</text>
+  <text x="1575" y="1176" class="nodeBody">One weakness becomes the next target</text>
+  <line x1="495" y1="1206" x2="2060" y2="1206" stroke="#313946" stroke-width="2"/>
+  <text x="495" y="1248" class="nodeTitle">The loop is the product.</text>
+  <text x="495" y="1284" class="nodeSmall">Tiger Data proves how the score moved. Backboard explains how the story changed. Gemini uses both to shape the next four questions.</text>
+
+  <path d="M2490 410 H2520 V1040 Q2520 1060 2500 1060 H1880 Q1860 1060 1860 1084" class="flow green"/>
+  <polygon points="1860,1084 1851,1068 1869,1068" class="greenFill"/>
+  <path d="M2490 760 H2500 V1045 Q2500 1065 2480 1065 H1980 Q1960 1065 1960 1084" class="flow purple"/>
+  <polygon points="1960,1084 1951,1068 1969,1068" class="purpleFill"/>
+  <path d="M450 1235 H350 Q325 1235 325 1210 V1040 Q325 1020 345 1020 H500 Q520 1020 520 946" class="flow blue dashed"/>
+  <polygon points="520,946 511,962 529,962" class="blueFill"/>
+
+  <!-- Legend -->
+  <line x1="70" y1="1380" x2="115" y2="1380" class="flow amber"/><text x="130" y="1386" class="nodeSmall">camera-derived signal</text>
+  <line x1="365" y1="1380" x2="410" y2="1380" class="flow blue"/><text x="425" y="1386" class="nodeSmall">voice / interface flow</text>
+  <line x1="710" y1="1380" x2="755" y2="1380" class="flow purple"/><text x="770" y="1386" class="nodeSmall">language / AI memory</text>
+  <line x1="1085" y1="1380" x2="1130" y2="1380" class="flow green"/><text x="1145" y="1386" class="nodeSmall">metrics / deterministic analysis</text>
+  <line x1="1545" y1="1380" x2="1590" y2="1380" class="flow white"/><text x="1605" y="1386" class="nodeSmall">authenticated application request</text>
+  <line x1="2070" y1="1380" x2="2115" y2="1380" class="flow blue dashed"/><text x="2130" y="1386" class="nodeSmall">feedback into next session</text>
+</svg>
