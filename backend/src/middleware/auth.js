@@ -1,12 +1,68 @@
 import '../config.js';
-import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { getApps, initializeApp, applicationDefault, cert } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 
+// The Firebase Admin service account. It is what lets this backend verify
+// the ID tokens the frontend sends -- specifically the checkRevoked pass in
+// verifyIdToken below, which calls Google's Identity Toolkit and therefore
+// needs a real credential, not just a project id.
+//
+// It used to be supplied only through GOOGLE_APPLICATION_CREDENTIALS, which
+// Google's library resolves as an ABSOLUTE path. That pinned the whole
+// backend to one person's laptop: every teammate had to edit .env to their
+// own home directory before the app would start. The three sources below are
+// tried in order so that nobody has to.
+const DEFAULT_KEY_PATH = fileURLToPath(new URL('../../firebase-service-account.json', import.meta.url));
+
+function resolveCredential() {
+  // 1. Inline JSON. The only option that works on a host with no filesystem
+  //    to put a key file on (Vultr, Render, Fly, a container), so it comes
+  //    first -- set FIREBASE_SERVICE_ACCOUNT_JSON to the file's contents.
+  const inline = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (inline && inline.trim()) {
+    try {
+      return { credential: cert(JSON.parse(inline)), source: 'FIREBASE_SERVICE_ACCOUNT_JSON' };
+    } catch (err) {
+      throw new Error(`FIREBASE_SERVICE_ACCOUNT_JSON is set but is not valid JSON: ${err.message}`);
+    }
+  }
+
+  // 2. An explicit path, if someone set one. Relative paths are resolved
+  //    against this file rather than the process's working directory, so
+  //    `FIREBASE_SERVICE_ACCOUNT_PATH=firebase-service-account.json` behaves
+  //    the same whether you launch from backend/ or the repo root.
+  const configured = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (configured && configured.trim()) {
+    const path = configured.startsWith('/')
+      ? configured
+      : fileURLToPath(new URL(`../../${configured}`, import.meta.url));
+    if (!existsSync(path)) {
+      throw new Error(`Firebase service account not found at "${path}". Fix the path, or drop the key at backend/firebase-service-account.json and remove the setting.`);
+    }
+    return { credential: cert(JSON.parse(readFileSync(path, 'utf8'))), source: path };
+  }
+
+  // 3. The convention: backend/firebase-service-account.json. Nothing to
+  //    configure -- clone the repo, drop the key in, run. This is the path
+  //    .gitignore already excludes, so the key never gets committed.
+  if (existsSync(DEFAULT_KEY_PATH)) {
+    return { credential: cert(JSON.parse(readFileSync(DEFAULT_KEY_PATH, 'utf8'))), source: DEFAULT_KEY_PATH };
+  }
+
+  // 4. Whatever the ambient environment provides (gcloud login, GCE/Cloud
+  //    Run metadata). Throws a clear error rather than a cryptic one if
+  //    there is nothing there either.
+  return { credential: applicationDefault(), source: 'application default credentials' };
+}
+
 export async function verifyFirebaseToken(token) {
-  const app = getApps()[0] || initializeApp({
-    credential: applicationDefault(),
-    projectId: process.env.FIREBASE_PROJECT_ID,
-  });
+  const app = getApps()[0] || (() => {
+    const { credential, source } = resolveCredential();
+    console.log(`[auth] Firebase credential loaded from ${source === 'FIREBASE_SERVICE_ACCOUNT_JSON' || source === 'application default credentials' ? source : 'backend/' + source.split('/backend/').pop()}`);
+    return initializeApp({ credential, projectId: process.env.FIREBASE_PROJECT_ID });
+  })();
   return getAuth(app).verifyIdToken(token, true);
 }
 

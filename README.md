@@ -1,137 +1,204 @@
-# Callback — Interview & Productivity Coach
+# Callback — AI Interview Coach
 
-## Current implementation
+**HackRice · Work & Productivity**
 
-`frontend/` contains the React/Vite dashboard and Electron desktop wrapper.
-`backend/` is the Firebase-token-authenticated Tiger Data API. It stores
-original PDFs, versioned calibration baselines, user interview profiles,
-sessions, and time-series Presage samples. The executable, additive schema is
-[`backend/sql/tigerdata.sql`](backend/sql/tigerdata.sql); it preserves existing
-TigerBase data when reapplied.
+A desktop mock-interview coach. An AI recruiter interviews you by voice about
+*your* résumé and *the* job you're applying for, watches how you carry yourself
+while you answer, and scores 23 traits from what you actually said and did — then
+remembers it, so the next interview knows where you were weak.
 
-Start the backend with its [setup guide](backend/README.md), then run the
-frontend with `npm install && npm run electron:dev` from `frontend/`. See the
-frontend README for Firebase, Presage, and API environment variables.
-
-**Event:** HackRice · **Track:** Work & Productivity
-**Sponsor challenges targeted:** Best Use of ElevenLabs · Best Use of Presage · Best Use of Vultr · Best Use of Tiger Data · Best Use of Backboard · Best Use of Gemini API · Best Domain Name from GoDaddy Registry 
+**Sponsor tracks:** ElevenLabs · Presage · Tiger Data · Backboard · Gemini API · Vultr · GoDaddy
 
 ---
 
-## Concept
+## What it actually does
 
-One multi-agent pipeline, two front-end modes:
+**1. Set up a session.** Upload a résumé (PDF) and paste the job posting.
 
-- **Interview Mode** — an AI "recruiter" persona (voiced by ElevenLabs) asks mock interview questions and gives feedback on filler words, gaze, posture, and pacing.
-- **Focus Mode** — the same perception pipeline runs passively while studying: detects checked-out behavior (phone glances, slouching, scrolling posture), voice-nudges the user, and manages Pomodoro timing.
+**2. Get interviewed.** Gemini reads both and designs **four questions for you
+specifically** — 1 behavioral, 2 grilling named projects on your résumé, 1 on a
+requirement from the posting, asked in that order. The recruiter speaks through
+ElevenLabs, listens, and asks a clarifying follow-up when an answer is too thin
+to assess. It ends itself after the fourth question.
 
-Same agents, same data backend, two prompts/UI skins — that's the unified-stack story for judges.
+The résumé is passed to Gemini as the **raw PDF**, not extracted text — no
+parsing step, no lossy intermediate.
+
+**3. Get measured, while you talk.** Three signal sources run at once:
+
+| Source | Measures |
+|---|---|
+| **Presage SmartSpectra** | pulse, stress, emotional signal from the camera |
+| **MediaPipe Face Mesh** | gaze direction, blink rate, posture shifts, fidgeting |
+| **Python analysis service** | STAR structure, filler words, hedging, repeated words, unfinished sentences, tangents, non-answers |
+
+**4. Get results.** A per-question critique with a rating and a concrete fix,
+strengths and weaknesses, and **23 traits scored 0–10** — from Verbal Clarity and
+Eye Contact to Answer Structure, Quantifying Impact and Outcome Focus.
+
+**5. Practise one weakness.** Click any trait → the next session is built to
+attack it. The planner is told your current score and picks whatever question mix
+best exercises that skill (four behavioral for Answer Structure; all résumé for
+Action Detail), and the live monitor collapses to show only that trait's signal.
+The recruiter never mentions it — the targeting is invisible, so the score still
+means something.
+
+**6. It remembers.** Every Q&A pair and session summary is embedded into
+Backboard. Later sessions retrieve semantically similar past answers, so the
+planner skips what you've mastered, deliberately re-asks what you fumbled (badged
+*Revisiting* in the UI), and the analysis writes **progress notes** comparing how
+you told the same story this time versus last.
+
+---
+
+## The data split — why two stores
+
+This is the part worth understanding:
+
+- **Tiger Data (Postgres + TimescaleDB)** owns the **numbers**. Traits, trends,
+  composites, goals, biometric time series. It answers *"how has this changed."*
+  Hypertables and continuous aggregates back the trend charts.
+- **Backboard** owns the **language**. What you actually said, and what the coach
+  told you about it. It answers *"what did he say last time someone asked about a
+  team conflict"* — a similarity question SQL cannot serve.
+
+Neither replaces the other. Retrieved memories are wrapped in a delimited block
+with `<`/`>` escaped before reaching a prompt — it's the user's own past speech,
+so it's treated as data, never instructions.
 
 ---
 
 ## Architecture
 
-This isn't a single left-to-right pipeline — several agents talk directly to each other in addition to routing through the reasoning core:
-
-- **Perception agent** (gaze, posture — MediaPipe) and **Speech agent** (filler words, pacing — local ASR) share timing data directly, since a posture shift and a filler word often happen in the same moment and are more informative combined.
-- **Presage SDK** (real-time focus/stress signal) feeds both the reasoning core *and* the Feedback model directly — the raw signal is useful for scoring even before Gemini reasons over it.
-- **Speech agent** also writes directly into the **Backend data layer**, bypassing Gemini — raw transcripts get logged regardless of what the model says about them.
-- **Gemini API** is the reasoning hub: it receives from Perception, Speech, and Presage, and routes out to ElevenLabs (voice) and down to the Backend data layer (session logging).
-- **Backend data layer** (Tiger Data + Backboard) and the **Feedback model** reference each other continuously — trend data informs the score, and new scores get logged as trend data.
-- **Session dashboard** closes the loop by feeding prior-session context forward into the next session's Perception agent.
-
 ```
-        Perception agent ──── shared timing ──── Speech agent
-               │                                       │  │
-               │                                       │  └──── raw transcript ────┐
-               ▼                                       ▼                           ▼
-                        Gemini API (reasoning core)                    Backend data layer
-                         │                    │                        (Tiger Data + Backboard)
-                         ▼                    ▼                              │      ▲
-                  ElevenLabs voice     [also feeds down]◄────────────────────┘      │
-                                                │                                    │
-        Presage SDK ── raw signal ──────────────┼───────────────► Feedback model ───┘
-               │                                                        │
-               └──────────────────────► (also feeds Gemini) ────────────┘
-                                                                          ▼
-                                                                 Session dashboard
-                                                                          │
-                                                          (next session) │
-                                                                          ▼
-                                                                 Perception agent
+  Electron desktop app (React + Vite)
+    │
+    ├── MediaPipe Face Mesh ──┐  gaze / posture / blink      (in-renderer)
+    ├── Presage SmartSpectra ─┤  pulse / stress / emotion    (native bridge)
+    │                         │
+    └── HTTPS ────────────────┴──►  Node / Express backend
+                                      │
+                ┌─────────────────────┼──────────────────────┐
+                │                     │                      │
+         Gemini API            Python analysis        ElevenLabs TTS
+      plan · turns · analysis   (spawned child)         recruiter voice
+                │                     │
+                └──────────┬──────────┘
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+        Tiger Data                 Backboard
+     numbers · trends          language · memory
 ```
 
+Every integration degrades instead of failing. Gemini down → static analysis
+still renders. Backboard down or unconfigured → interview runs exactly as it did
+before memory existed. Python missing → biometric and AI halves still score. A
+memory outage must never cost you your session.
+
+Gemini calls walk a **model fallback chain** (`GEMINI_MODEL` →
+`GEMINI_TURN_FALLBACKS` → `GEMINI_ANALYSIS_MODEL`) with per-model retry. Free-tier
+quota is metered per model per day, so a model that's exhausted or overloaded is
+stepped over rather than retried — and retired model names are pruned at boot so
+a bad config is caught at startup, not three questions into an interview.
+
 ---
 
-## Project structure
+## Running it
+
+You need **two processes**: the backend, and the Electron app.
+
+### 1. Backend
+
+```bash
+cd backend
+npm install
+cp .env.example .env      # then fill it in — see below
+npm run dev               # http://127.0.0.1:3001
+```
+
+Ask a teammate for the Firebase service-account JSON and save it at
+`backend/firebase-service-account.json`. It's auto-discovered and gitignored —
+no paths to edit. (For hosting, paste its contents into
+`FIREBASE_SERVICE_ACCOUNT_JSON` instead; no file needed.)
+
+`.env` needs: `GEMINI_API_KEY`, `ELEVENLABS_API_KEY`, `BACKBOARD_API_KEY`,
+`FIREBASE_PROJECT_ID`, and the `TIGER_DATA_*` connection block. Leave
+`BACKBOARD_API_KEY` blank to run without memory — every memory path no-ops
+cleanly.
+
+`python3` is optional but recommended: the backend spawns
+`python/analysis_service.py` on boot for the speech analysis. Plain stdlib, no
+pip install. Without it, transcript signals are skipped.
+
+The schema in `backend/sql/tigerdata.sql` is idempotent and re-applied on every
+boot, so there's no migration step.
+
+### 2. Desktop app
+
+```bash
+cd frontend
+npm install
+cp .env.example .env      # VITE_FIREBASE_*, VITE_SMARTSPECTRA_API_KEY
+npm run electron:dev
+```
+
+Electron (not a browser) is required — the Presage SDK runs natively in the main
+process and is bridged to the renderer over a MessagePort. macOS will prompt for
+camera and microphone on first launch; both are required.
+
+### Checks
+
+```bash
+cd backend  && npm test              # 22 tests
+cd frontend && npm test              # 17 tests
+cd frontend && npm run build         # typecheck + production build
+cd backend  && npm run gemini:check  # which Gemini models your key can reach
+```
+
+---
+
+## Deploying
+
+The backend is the only thing that needs hosting — Tiger Data and Backboard are
+already remote. Two things to know before you try:
+
+1. Packaged Electron loads `dist/index.html` over `file://`, so the page origin
+   is `null`. Firebase's `signInWithPopup` rejects that, and so will CORS. Serve
+   `dist/` from a local HTTP server inside Electron and `loadURL` it, then add
+   that origin to Firebase's authorised domains and to `FRONTEND_ORIGIN`.
+2. `VITE_*` values are **inlined at build time** and ship inside the app.
+   Firebase web keys are public by design and fine; `VITE_SMARTSPECTRA_API_KEY`
+   is a real vendor key and will be readable by anyone who downloads a build.
+
+Backend secrets (`GEMINI_API_KEY`, `ELEVENLABS_API_KEY`, `BACKBOARD_API_KEY`,
+`TIGER_DATA_PASSWORD`) are read at runtime from `backend/.env` and never enter
+the Electron bundle.
+
+---
+
+## Layout
 
 ```
-Callback/
-  frontend/     # placeholder — Interview/Focus Mode UI + dashboard (not built yet)
-  backend/      # Node/Express backend
-    src/
-      services/ # one module per integration — gemini, elevenlabs, presage, tigerdata, backboard
-      routes/
-      index.js
-  python/       # placeholder — Perception (MediaPipe) + Speech (ASR) agents (not built yet)
+backend/
+  src/
+    routes/       services · analytics · data · documents · tts · stt
+    services/     gemini · elevenlabs · backboard · analytics ·
+                  sessionAnalysis · memoryRecords · pythonAnalysis · tigerdata
+    integrations/backboard/   HTTP client (throttled, typed errors)
+    middleware/auth.js        Firebase ID-token verification
+  sql/            idempotent schema + continuous aggregates
+frontend/
+  src/            Dashboard · SessionMeeting · Results · Trends · Calibration
+  electron/       main + preload (Presage native bridge, media permissions)
+python/
+  analysis_service.py         rule-based speech analysis (stdlib only)
 ```
 
-Each file in `backend/src/services/` is a skeleton with stubbed, throwing
-functions to be filled in as each integration gets wired up.
-
 ---
 
-## Agents
+## A note on the signals
 
-| Agent | Role | Built with |
-|---|---|---|
-| Perception agent | Gaze, posture, blink-rate tracking from webcam | MediaPipe Face Mesh (local) |
-| Speech agent | ASR + filler-word detection + pacing/pause analysis | Local ASR (Vosk/faster-whisper), librosa/parselmouth |
-| Presage SDK | Real-time focus/stress/engagement signal from camera | Presage SDK |
-| Gemini API | Reasoning core — drives the recruiter persona and generates contextual feedback | Gemini API |
-| Backend data layer | Session metrics + long-term memory | Tiger Data (Postgres/Timescale) + Backboard |
-| Feedback model | Combines signals into a session score | Trained scorer (XGBoost or small NN) on labeled sessions |
-| ElevenLabs | Voices the recruiter persona and Focus Mode nudges | ElevenLabs TTS |
-| Session dashboard | Displays trends across sessions | Frontend chart view on Tiger Data queries |
-
----
-
-## Data layer — Tiger Data + Backboard
-
-Both live in the same architecture but do different jobs, and neither replaces the other:
-
-- **Tiger Data (Postgres/Timescale):** structured, numeric, time-ordered data — filler-word rate per session, gaze-away seconds, engagement/stress trend, Pomodoro session logs. Hypertables + continuous aggregates power the dashboard's trend charts.
-- **Backboard:** long-term conversational memory and retrieval — past transcripts, coaching notes, "what went wrong last time on this type of question." Handles embeddings and persistence across sessions without a custom vector pipeline.
-
-When the Coach Agent generates feedback, it pulls both: a SQL trend query from Tiger Data ("what's the pattern") and a Backboard retrieval call ("what specifically happened last time"), then hands both to Gemini as context.
-
----
-
-## Sponsor mapping
-
-- **ElevenLabs** — live-voiced recruiter persona; Focus Mode nudges.
-- **Presage** — real-time engagement/focus/stress score, used both by Gemini and directly by the Feedback model.
-- **Vultr** — hosts the backend/agent orchestration; Cloud GPU tier for local ASR/CV inference if needed.
-- **Tiger Data** — time-series habit tracking + continuous-aggregate dashboards.
-- **Backboard** — long-term memory/RAG layer, replacing a custom pgvector build.
-
----
-
-## MVP build order
-
-Be ruthless about scope — build in this order:
-
-1. **Perception agent** (MediaPipe gaze/posture) — get one thing working end to end.
-2. **Presage integration** — one real-time metric streaming and logged.
-3. **Speech agent** — local ASR + filler-word counting (simple counting is fine for the weekend; a trained disfluency classifier is a stretch goal, not a requirement).
-4. **Tiger Data pipeline** — session metrics into a hypertable, one continuous aggregate, one dashboard chart.
-5. **Gemini + ElevenLabs** — one working voiced Q&A loop.
-6. **Backboard integration** — memory/retrieval layer, added once the core loop works.
-7. **Focus Mode** — same pipeline, different prompt/UI; cheap to add once Interview Mode works, and extends track eligibility.
-
----
-
-## Pitch framing notes
-
-- Frame all facial/vocal outputs as engagement, focus, and stress *indicators* — not diagnoses, not lie detection. This matches how Presage itself frames its intended use cases and keeps the project in the Work & Productivity track rather than reading as medical.
-- The most defensible "what did you build" answer for judges is the Perception + Speech agents and the Feedback model — those are built end to end in-house. Backboard and Presage are managed services doing real, necessary work, but they're not the differentiator to lead with if pushed on technical depth.
+Facial and vocal outputs are **engagement, focus and stress indicators for
+coaching** — not diagnoses, not a lie detector, not a clinical measurement. A
+signal with no recorded data is not shown rather than guessed at.
