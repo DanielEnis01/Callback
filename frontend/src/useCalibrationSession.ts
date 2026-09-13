@@ -3,15 +3,13 @@ import {
   SmartSpectraSDK,
   breathingMetrics,
   faceMetrics,
-  micromotionMetrics,
-  edaMetrics,
 } from "@smartspectra/node-sdk/renderer";
 import { decodeMetrics } from "@smartspectra/node-sdk/messages";
 
 // Requested individually below (not via the cardioMetrics bundle) so we can
-// skip ARTERIAL_PRESSURE_TRACE (16), which this app does not use. EDA and
-// micromotion are requested explicitly because calibration saves those
-// signals as part of the complete baseline.
+// skip ARTERIAL_PRESSURE_TRACE (16), which this app does not use. Calibration
+// intentionally requests only the normal-vitals signals needed for the
+// resting-vitals baseline; optional motion/EDA models should not delay it.
 const PULSE_RATE_METRIC = 15;
 const HRV_METRIC = 17;
 
@@ -151,8 +149,6 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
         apiKey,
         requestedMetrics: [
           ...breathingMetrics,
-          ...micromotionMetrics,
-          ...edaMetrics,
           PULSE_RATE_METRIC,
           HRV_METRIC,
           ...faceMetrics,

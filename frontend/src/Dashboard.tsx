@@ -20,15 +20,14 @@ import {
   Check,
 } from "lucide-react";
 import { SessionMeeting } from "./SessionMeeting";
-import { CalibrationSession } from "./CalibrationSession";
 import { SessionSetup } from "./SessionSetup";
-import { getBaseline } from "./baselineStore";
+import { getAverageRestingVitals } from "./baselineStore";
 
 interface DashboardProps {
   onLogout: () => void;
 }
 
-type View = "dashboard" | "results" | "sessions" | "trends" | "settings" | "calibration";
+type View = "dashboard" | "results" | "sessions" | "trends" | "settings" | "reference";
 type NavItem = { id: View; title: string; icon: ElementType };
 
 const navGroups: { heading?: string; items: NavItem[] }[] = [
@@ -38,7 +37,7 @@ const navGroups: { heading?: string; items: NavItem[] }[] = [
       { id: "results", title: "Results", icon: FileBarChart },
       { id: "sessions", title: "Sessions", icon: History },
       { id: "trends", title: "Trends", icon: TrendingUp },
-      { id: "calibration", title: "Calibration", icon: SlidersHorizontal },
+      { id: "reference", title: "Reference", icon: SlidersHorizontal },
     ],
   },
 ];
@@ -131,7 +130,12 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
   const [view, setView] = useState<View>("dashboard");
   const [inSessionSetup, setInSessionSetup] = useState(false);
   const [inMeeting, setInMeeting] = useState(false);
-  const [inCalibration, setInCalibration] = useState(false);
+
+  const startSession = () => {
+    // Sessions use the average-adult reference profile until personalized
+    // calibration is added back as an optional feature.
+    setInSessionSetup(true);
+  };
 
   // Every session starts with a quick "what are you practicing for" gate —
   // confirm/replace the resume and paste this session's job posting —
@@ -149,21 +153,12 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
     return <SessionMeeting onEnd={() => { setInMeeting(false); setView("results"); }} />;
   }
 
-  if (inCalibration) {
-    return (
-      <CalibrationSession
-        onDone={() => { setInCalibration(false); setView("calibration"); }}
-        onCancel={() => setInCalibration(false)}
-      />
-    );
-  }
-
   const breadcrumb =
     view === "dashboard" ? "Dashboard"
     : view === "results" ? "Results"
     : view === "sessions" ? "Sessions"
     : view === "settings" ? "Settings"
-    : view === "calibration" ? "Calibration"
+    : view === "reference" ? "Reference"
     : "Trends";
 
   return (
@@ -178,7 +173,7 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
         </div>
 
         <button
-          onClick={() => setInSessionSetup(true)}
+          onClick={startSession}
           aria-label="Start session"
           className="mt-6 flex h-10 w-full items-center justify-center bg-white text-black rounded-none transition-opacity active:opacity-70"
         >
@@ -249,14 +244,14 @@ export const Dashboard: FC<DashboardProps> = ({ onLogout }) => {
           </div>
         </header>
 
-        {view === "calibration" ? (
+        {view === "reference" ? (
           <div className="flex-1 min-h-0 overflow-hidden px-6 py-6">
-            <CalibrationView onRecalibrate={() => setInCalibration(true)} />
+            <CalibrationView />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-8 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             <div className="mx-auto max-w-5xl flex flex-col gap-6">
-              {view === "dashboard" && <OverallView onStart={() => setInSessionSetup(true)} onViewSessions={() => setView("sessions")} />}
+              {view === "dashboard" && <OverallView onStart={startSession} onViewSessions={() => setView("sessions")} />}
               {view === "results" && <ResultsView onViewSessions={() => setView("sessions")} />}
               {view === "sessions" && <SessionsView onOpen={() => setView("results")} />}
               {view === "trends" && <TrendsView />}
@@ -414,36 +409,23 @@ const TrendsView: FC = () => (
   </>
 );
 
-// ── Calibration ───────────────────────────────────────────────────
-// Seed/placeholder values shown before the person has ever run
-// calibration. Once a real Baseline exists (see baselineStore.ts —
-// captured by CalibrationSession) its numbers replace these below.
-const seedHeadline = [
-  { label: "Resting pulse", value: "68", unit: "bpm" },
-  { label: "Breathing rate", value: "14", unit: "/min" },
-  { label: "Blink rate", value: "17", unit: "/min" },
-  { label: "Stress (Baevsky)", value: "42", unit: "· Low" },
-];
+// ── Average reference ─────────────────────────────────────────────
+// These are population-level comparison values, not a medical assessment or
+// a personalized calibration of the current user.
 
 function fmt(n: number | null | undefined, digits = 0): string | null {
   return n == null || Number.isNaN(n) ? null : n.toFixed(digits);
 }
 
-const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) => {
-  const baseline = getBaseline();
+const CalibrationView: FC = () => {
+  const baseline = getAverageRestingVitals();
 
   const headline = baseline
     ? [
         { label: "Resting pulse", value: fmt(baseline.restingPulseBpm) ?? "—", unit: "bpm" },
         { label: "Breathing rate", value: fmt(baseline.breathingRatePerMin) ?? "—", unit: "/min" },
-        { label: "Blink rate", value: fmt(baseline.blinkRatePerMin) ?? "—", unit: "/min" },
-        {
-          label: "Stress (Baevsky)",
-          value: fmt(baseline.baevsky) ?? "—",
-          unit: baseline.stressLabel ? `· ${baseline.stressLabel}` : "",
-        },
       ]
-    : seedHeadline;
+    : [];
 
   const baselineGroups: { heading: string; rows: { label: string; value: string }[] }[] = baseline
     ? [
@@ -459,77 +441,26 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
           heading: "Breathing pattern",
           rows: [
             { label: "Rate", value: fmt(baseline.breathingRatePerMin) ? `${fmt(baseline.breathingRatePerMin)} /min` : "Not enough data" },
-            { label: "Amplitude", value: fmt(baseline.breathingAmplitude, 2) ?? "Not enough data" },
-          ],
-        },
-        {
-          heading: "Motion & stress",
-          rows: [
-            { label: "Seat micro-motion", value: fmt(baseline.microMotion.seat, 3) ?? "Not enough data" },
-            { label: "Knee micro-motion", value: fmt(baseline.microMotion.knees, 3) ?? "Not enough data" },
-            {
-              label: "Skin conductance (EDA)",
-              // The SDK needs 35s+ of continuous recording before it produces
-              // a first EDA sample, so a 45s calibration often only gets a
-              // couple — this is genuinely absent more often than not.
-              value: fmt(baseline.edaMicroSiemens, 2) ? `${fmt(baseline.edaMicroSiemens, 2)} µS` : "Not enough data",
-            },
+            { label: "Amplitude", value: "Not standardized" },
           ],
         },
       ]
-    : [
-        {
-          heading: "Heart rate variability",
-          rows: [
-            { label: "RMSSD", value: "48 ms" },
-            { label: "SDNN", value: "62 ms" },
-            { label: "Mean NN", value: "880 ms" },
-          ],
-        },
-        {
-          heading: "Breathing pattern",
-          rows: [
-            { label: "Rate", value: "14 /min" },
-            { label: "Amplitude", value: "Normal" },
-          ],
-        },
-        {
-          heading: "Motion & stress",
-          rows: [
-            { label: "Seat micro-motion", value: "Low" },
-            { label: "Knee micro-motion", value: "Low" },
-            { label: "Skin conductance (EDA)", value: "3.2 µS" },
-          ],
-        },
-      ];
-
-  const capturedLabel = baseline
-    ? new Date(baseline.capturedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-    : null;
+    : [];
 
   return (
     <div className="h-full flex flex-col min-h-0">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 shrink-0">
         <div>
-          <h1 className="text-[28px] font-800 tracking-tight" style={{ fontWeight: 800 }}>Baseline</h1>
+          <h1 className="text-[28px] font-800 tracking-tight" style={{ fontWeight: 800 }}>Average adult reference</h1>
           <p className="mt-1 text-[13px] text-white/45" style={{ fontWeight: 300 }}>
-            {baseline
-              ? `Your calm/resting values · captured ${capturedLabel}. Every session is scored as a deviation from these.`
-              : "No calibration on file yet — these are placeholder values. Run calibration to capture your own."}
+            Population-level resting-vitals reference values · these are not personalized measurements.
           </p>
         </div>
-        <button
-          onClick={onRecalibrate}
-          className="flex items-center gap-2 bg-white text-black text-[13px] font-semibold px-5 h-11 rounded-none transition-opacity active:opacity-70 shrink-0"
-        >
-          <SlidersHorizontal className="h-4 w-4" strokeWidth={1.8} />
-          {baseline ? "Recalibrate" : "Run calibration"}
-        </button>
       </div>
 
       {/* Headline vitals */}
-      <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/12 border border-white/12 shrink-0">
+      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-px bg-white/12 border border-white/12 shrink-0">
         {headline.map((s) => (
           <div key={s.label} className="bg-black p-4 flex flex-col gap-2">
             <span className="text-[11px] uppercase tracking-[0.14em] text-white/35">{s.label}</span>
@@ -541,8 +472,28 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
         ))}
       </div>
 
+      {/* Health and safety disclaimer */}
+      <div className="mt-5 border border-amber-400/30 bg-amber-400/5 p-4 shrink-0">
+        <h2 className="text-[12px] uppercase tracking-[0.14em] text-amber-200/80">Health disclaimer</h2>
+        <p className="mt-2 text-[12px] text-white/60 leading-relaxed">
+          The age-predicted maximum heart rate is approximately <span className="text-white/85">220 − age</span>.
+          This is an average estimate and general guide, not a diagnosis. Heart rate can vary with fitness,
+          stress, medication, and health conditions. An unusually high or low reading that persists should be
+          discussed with a doctor. Any pain—especially chest pain or pressure—should be evaluated by a doctor;
+          seek urgent medical help for severe symptoms, trouble breathing, or fainting.
+        </p>
+        <a
+          className="mt-2 inline-block text-[11px] text-amber-200/80 underline underline-offset-2 hover:text-amber-100"
+          href="https://www.heart.org/en/healthy-living/fitness/fitness-basics/target-heart-rates"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Source: American Heart Association · Target heart rates
+        </a>
+      </div>
+
       {/* Detailed baseline groups */}
-      <div className="mt-6 flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="mt-6 flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-6">
         {baselineGroups.map((g) => (
           <div key={g.heading} className="border border-white/12 p-5 flex flex-col">
             <h2 className="text-[13px] uppercase tracking-[0.16em] text-white/40 mb-3">{g.heading}</h2>
@@ -559,8 +510,8 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
       </div>
 
       <p className="mt-5 text-[11px] text-white/25 leading-relaxed shrink-0">
-        Baseline is stored only on this device for now (no accounts/database yet) to compare against your own
-        future sessions. Indicators are heuristic estimates for coaching, not a clinical or certified measurement.
+        These reference values are population-level estimates for comparison, not a personal baseline or a
+        clinical measurement. HRV and stress vary substantially by person and measurement method.
       </p>
     </div>
   );

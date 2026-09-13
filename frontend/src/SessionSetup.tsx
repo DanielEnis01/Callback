@@ -19,10 +19,9 @@ interface SessionSetupProps {
  * is deliberately single-select so the AI has one clear goal per session
  * instead of splitting focus across several.
  *
- * Distinct from calibration's one-time profile: that collects a baseline
- * resume once, this collects the (resume, job posting, weakness) tuple
- * fresh for every session, since the role being practiced for changes
- * session to session but the calibrated body/voice baseline doesn't.
+ * This collects the (resume, job posting, weakness) tuple fresh for every
+ * session. The role being practiced for can change from session to session,
+ * while the interview compares live vitals with the average-adult reference.
  */
 // Mock stand-in for a real per-user weakness list, which will eventually
 // come from tracked feedback across past sessions. Picking from here just
@@ -62,13 +61,12 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
     setResumeError(null);
   };
 
-  // Defaults to the resume captured during calibration; picking a new file
-  // here only overrides it for this session, it doesn't touch the profile.
+  // Reuse a previously saved profile resume when available; picking a new
+  // file here only overrides it for this session.
   const effectiveResume = sessionResumeFile
     ? { name: sessionResumeFile.name, size: sessionResumeFile.size }
     : profile?.resume ?? null;
   const usingProfileResume = !sessionResumeFile && !!profile?.resume;
-
   const resumeSize = (bytes: number) =>
     bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 

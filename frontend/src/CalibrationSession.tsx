@@ -5,7 +5,6 @@ import { shouldShowCalibrationNotice } from "./calibrationNotice";
 import { CameraFeed } from "./CameraFeed";
 import { useCalibrationSession, type CalibrationSample } from "./useCalibrationSession";
 import { saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
-import { fetchReadingText, fallbackQuotes } from "./readingText";
 import { useMediaPipe, buildMediaPipeBaseline } from "./useMediaPipe";
 
 interface CalibrationSessionProps {
@@ -15,10 +14,10 @@ interface CalibrationSessionProps {
 
 type Phase = "profile" | "intro" | "checking" | "recording" | "done";
 
-const MIN_RECORDING_SECONDS = 40;
-// A single SDK result is not a useful baseline. Require a few valid readings
-// for every signal before saving, while still allowing the SDK to take longer
-// for metrics such as EDA that initialize late.
+const MIN_RECORDING_SECONDS = 25;
+  // A few valid vital readings are enough for this short calibration. Optional
+// signals such as EDA and micromotion may still be collected, but they must not
+// hold the user in calibration for 35+ seconds while their models initialize.
 const MIN_VALID_READINGS = 3;
 // How long every readiness check has to hold true, back-to-back, before we
 // trust it and start recording — short enough not to be annoying, long
@@ -80,28 +79,20 @@ function validCount(samples: CalibrationSample[], getValue: (sample: Calibration
   return samples.reduce((count, sample) => count + (Number.isFinite(getValue(sample)) ? 1 : 0), 0);
 }
 
-function getBaselineReadiness(samples: CalibrationSample[], mediaPipeSamples: Parameters<typeof buildMediaPipeBaseline>[0]) {
+function getBaselineReadiness(samples: CalibrationSample[]) {
   const stressReadings = Math.min(
     validCount(samples, (s) => s.hrvRmssd),
     validCount(samples, (s) => s.hrvSdnn),
     validCount(samples, (s) => s.hrvMeanNn),
     validCount(samples, (s) => s.baevsky),
   );
-  const mediaPipeReady = buildMediaPipeBaseline(mediaPipeSamples) !== null;
   const items = [
     { key: "pulse", label: "Heartbeat", count: validCount(samples, (s) => s.pulse) },
     { key: "breathing", label: "Breathing", count: Math.min(validCount(samples, (s) => s.breathingRate), validCount(samples, (s) => s.breathingAmplitude)) },
     { key: "stress", label: "Stress / HRV", count: stressReadings },
-    { key: "eda", label: "Skin conductance", count: validCount(samples, (s) => s.eda) },
-    { key: "seat", label: "Seat motion", count: validCount(samples, (s) => s.micromotionSeat) },
-    { key: "knees", label: "Knee motion", count: validCount(samples, (s) => s.micromotionKnees) },
-    { key: "blinks", label: "Blink rate", count: samples.filter((sample) => sample.blinkDetected != null).length },
-    { key: "posture", label: "Posture", count: mediaPipeSamples.filter((s) =>
-      [s.headYaw, s.headPitch, s.headRoll, s.shoulderTiltDeg, s.torsoLeanDeg,
-        s.shoulderDistance, s.poseMovementRate].every((v) => typeof v === "number" && Number.isFinite(v))).length },
   ].map((item) => ({
     ...item,
-    ready: item.key === "posture" ? mediaPipeReady : item.count >= MIN_VALID_READINGS,
+    ready: item.count >= MIN_VALID_READINGS,
   }));
 
   return { items, ready: items.every((item) => item.ready) };
@@ -121,8 +112,6 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [draggingResume, setDraggingResume] = useState(false);
   const [readingInstructionsOpen, setReadingInstructionsOpen] = useState(false);
-  const [gazeCalibrationOpen, setGazeCalibrationOpen] = useState(false);
-  const [gazeCalibrationDone, setGazeCalibrationDone] = useState(false);
   const [sampleTick, setSampleTick] = useState(0);
   const [slowWarningDismissed, setSlowWarningDismissed] = useState(false);
   const completionStartedRef = useRef(false);
@@ -151,25 +140,10 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
     : null;
   const profileReady = name.trim().length > 0 && targetRoles.trim().length > 0 && !!resumeFile;
 
-  // Reading passage — a list of generic filler quotes, fetched fresh each
-  // time with a bundled offline fallback (see readingText.ts) so
-  // calibration never blocks on network. It remains a native scroll area,
-  // letting the person control their own reading pace throughout the scan.
-  const [quotes, setQuotes] = useState<string[]>(fallbackQuotes());
-  useEffect(() => {
-    let cancelled = false;
-    fetchReadingText().then((list) => {
-      if (!cancelled) setQuotes(list);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const cameraActive = phase === "checking" || phase === "recording";
-  // Do not collect baseline samples or advance the clock while the reading
-  // instructions or gaze calibration are in front of the passage.
-  const readingStarted = phase === "recording" && !readingInstructionsOpen && !gazeCalibrationOpen;
+  // Do not collect baseline samples or advance the clock while the stillness
+  // instructions are in front of the camera.
+  const readingStarted = phase === "recording" && !readingInstructionsOpen;
   const recording = readingStarted && !facePausedForTooLong;
   const { stream, status, error, faceBox, samplesRef, validationHint, pipelineHint, cameraQualityHint, signalDiagnostics } = useCalibrationSession(cameraActive, recording, videoSize);
 
@@ -219,11 +193,9 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   const faceOk = !!faceBox;
   const lightingOk = brightness != null && brightness >= MIN_BRIGHTNESS && brightness <= MAX_BRIGHTNESS;
-  // "Chest in frame" isn't something the SDK reports directly, so this
-  // approximates it from the face box: as long as the chin sits comfortably
-  // above the bottom of the frame (with the face not filling the whole
-  // picture), there should be room for shoulders/chest below it. Ask the
-  // person to sit back a bit if this keeps failing.
+  // Require the face to leave room below it, then confirm MediaPipe can see
+  // both shoulders in that space. This prevents a face-only framing from
+  // passing when the upper chest is cropped out.
   const framedOk =
     faceOk &&
     faceBox!.minY > 0.03 &&
@@ -231,7 +203,16 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
     faceBox!.maxY - faceBox!.minY < 0.6 &&
     faceBox!.maxY - faceBox!.minY > 0.1;
 
-  const allReady = faceOk && lightingOk && framedOk;
+  const upperChestOk =
+    mediaPipe.status === "ready" &&
+    faceOk &&
+    mediaPipe.shoulderDistance != null &&
+    mediaPipe.shoulderDistance > 0.08 &&
+    mediaPipe.midShoulderY != null &&
+    mediaPipe.midShoulderY > faceBox!.maxY &&
+    mediaPipe.midShoulderY < 0.9;
+
+  const allReady = faceOk && lightingOk && framedOk && upperChestOk;
 
   // Readiness hold timer — resets the instant any condition drops.
   useEffect(() => {
@@ -247,8 +228,8 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   useEffect(() => {
     if (phase === "checking" && holdMs >= HOLD_STEADY_MS) {
-      setGazeCalibrationOpen(true);
       setPhase("recording");
+      setReadingInstructionsOpen(true);
     }
   }, [phase, holdMs]);
 
@@ -300,17 +281,13 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   }, [phase]);
 
   const baselineReadiness = useMemo(
-    () => getBaselineReadiness(samplesRef.current, mediaPipeSamplesRef.current),
-    [sampleTick, samplesRef, mediaPipeSamplesRef],
+    () => getBaselineReadiness(samplesRef.current),
+    [sampleTick, samplesRef],
   );
 
   const missingSignals = baselineReadiness.items.filter((item) => !item.ready).map((item) => {
     let reason: string;
-    if (item.key === "posture") {
-      reason = mediaPipe.error || (mediaPipe.status === "loading"
-        ? "The posture models are still loading."
-        : "Waiting for five complete head, shoulder, torso, and movement readings. Keep your upper body visible.");
-    } else {
+    {
       const keys = item.key === "stress" ? ["hrvRmssd", "hrvSdnn", "hrvMeanNn", "baevsky"]
         : item.key === "breathing" ? ["breathingRate", "breathingAmplitude"] : [item.key];
       const reported = keys.map((key) => signalDiagnostics[key]).filter(Boolean);
@@ -318,14 +295,11 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
         reported.find((message) => message.includes("unstable") || message.includes("invalid")) || reported[0] ||
         (item.key === "stress" ? "No complete HRV readings yet. Stress is calculated from heart-beat intervals and depends on a usable pulse signal."
           : item.key === "pulse" ? "No usable pulse readings yet. The camera pulse signal must pass the SDK's validation."
-          : item.key === "eda" ? "No usable skin conductance readings yet. EDA requires its extra SDK model and takes over 35 seconds to produce its first result."
-          : item.key === "seat" || item.key === "knees" ? "No usable micromotion readings yet. These signals require extra SDK models and appropriate body framing."
-          : item.key === "blinks" ? "No blink detection readings yet. Keep your eyes visible."
           : "Waiting for both breathing rate and amplitude readings. Keep your chest visible.");
       if (cameraQualityHint && !error) reason += ` Camera quality: ${cameraQualityHint}`;
       if (validationHint && !error) reason += ` Camera guidance: ${validationHint}`;
     }
-    if (!readingStarted && !error && !pipelineHint) reason = "Baseline collection has not started. Complete the camera/posture check and select Begin reading. " + reason;
+    if (!readingStarted && !error && !pipelineHint) reason = "Baseline collection has not started. Complete the camera check and select Begin calibration. " + reason;
     return { label: item.label, reason };
   });
   const slowWarningOpen = shouldShowCalibrationNotice(cameraActive, waitingSeconds * 1000, missingSignals.length, slowWarningDismissed);
@@ -336,14 +310,14 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
       elapsed >= MIN_RECORDING_SECONDS &&
       baselineReadiness.ready &&
       !readingInstructionsOpen &&
-      !gazeCalibrationOpen &&
       !facePausedForTooLong &&
-      status === "running" && mediaPipe.status === "ready" &&
+      status === "running" &&
       !completionStartedRef.current
     ) {
       completionStartedRef.current = true;
       const baseline = buildBaseline(samplesRef.current, elapsed * 1000);
-      // Attach MediaPipe baselines (neutral head angles, shoulder tilt, etc.).
+      // Posture is useful when available, but the 25-second vitals calibration
+      // should not fail just because the optional local model is unavailable.
       baseline.mediaPipe = buildMediaPipeBaseline(mediaPipeSamplesRef.current);
       if (!saveBaseline(baseline)) {
         setSaveError("We collected your baseline, but could not save it on this device. Cancel and try again after freeing browser storage.");
@@ -351,7 +325,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
       }
       setPhase("done");
     }
-  }, [phase, elapsed, baselineReadiness.ready, readingInstructionsOpen, gazeCalibrationOpen, facePausedForTooLong, status, mediaPipe.status, samplesRef, mediaPipeSamplesRef]);
+  }, [phase, elapsed, baselineReadiness.ready, readingInstructionsOpen, facePausedForTooLong, status, samplesRef, mediaPipeSamplesRef]);
 
   const pct = Math.min(baselineReadiness.ready ? 100 : 99, Math.round(
     Math.min(elapsed / MIN_RECORDING_SECONDS,
@@ -364,8 +338,9 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
       { label: "Lighting", ok: lightingOk, icon: Sun, hint: brightness == null ? "Reading…" : brightness < MIN_BRIGHTNESS ? "Too dark" : "Too bright" },
       { label: "Face visible", ok: faceOk, icon: ScanFace, hint: "Look at the camera" },
       { label: "Framing", ok: framedOk && faceOk, icon: AlignVerticalSpaceAround, hint: "Sit back so your shoulders show" },
+      { label: "Upper chest", ok: upperChestOk, icon: AlignVerticalSpaceAround, hint: mediaPipe.status === "loading" ? "Loading posture check" : "Move back until both shoulders and upper chest show" },
     ],
-    [lightingOk, faceOk, framedOk, brightness],
+    [lightingOk, faceOk, framedOk, upperChestOk, brightness, mediaPipe.status],
   );
 
   return (
@@ -382,7 +357,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
         </div>
         {phase === "recording" && (
           <div className="flex items-center gap-4 text-[13px] text-white/50">
-            <span className="tabular-nums">{clock} / at least 00:40</span>
+            <span className="tabular-nums">{clock} / 00:25</span>
             <span className="flex items-center gap-2">
               <span className="h-2 w-2 bg-white" />
               {readingInstructionsOpen
@@ -391,7 +366,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
                   ? "Paused"
                   : elapsed >= MIN_RECORDING_SECONDS && !baselineReadiness.ready
                     ? "Collecting remaining signals"
-                    : "Measuring baseline"}
+                    : "Measuring vitals"}
             </span>
           </div>
         )}
@@ -524,15 +499,12 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               Let's find your baseline.
             </h1>
             <p className="text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
-              This is calibration — you'll read a few simple phrases out loud while we measure your resting
-              pulse, breathing, and stress level. There's no right answer, nothing to perform; we just need a
-              calm reading of you specifically so future sessions can be scored against your own baseline
-              instead of a generic average.
+              This is a short calibration. We&apos;ll measure your resting pulse, breathing, and stress level so
+              your interview feedback is compared with your own baseline instead of a generic average.
             </p>
             <p className="text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
-              First we'll open your camera and check the lighting, your face, and framing. Once that looks
-              good and holds steady for a couple seconds, a reading starts automatically. It runs for at least
-              40 seconds and continues until every baseline signal has enough valid data.
+              First we&apos;ll check your lighting, face, and framing. Then stay still, breathe normally, and keep
+              your face and shoulders visible for 25 seconds while we capture your vitals.
             </p>
             <div className="flex items-center gap-3 mt-2">
               <button
@@ -577,7 +549,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
             )}
           </div>
 
-          <div className="shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-px bg-white/12 border border-white/12">
+          <div className="shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/12 border border-white/12">
             {checklist.map((c) => (
               <div key={c.label} className="bg-black p-4 flex items-center gap-3">
                 <span
@@ -627,96 +599,56 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               )}
             </div>
 
-            {/* Reading passage — scroll at a comfortable pace while recording */}
             <div className="shrink-0 border border-white/12 p-5">
               <span className="text-[11px] uppercase tracking-[0.16em] text-white/40">
-                Read aloud and scroll at your own pace until every baseline signal is ready
+                Vitals calibration · 25 seconds
               </span>
-              <div className="relative mt-2 h-48">
-                <div className="calibration-reading-passage h-full overflow-y-auto pr-1" tabIndex={0}>
-                  <ul className="space-y-4">
-                    {quotes.map((q, i) => (
-                      <li key={i} className="text-[19px] leading-relaxed text-white/85" style={{ fontWeight: 300 }}>
-                        {q}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-black to-transparent" />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-4 bg-gradient-to-t from-black to-transparent" />
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {[
+                  ["Stay still", "Keep your head and shoulders relaxed."],
+                  ["Breathe normally", "Use your natural breathing rhythm."],
+                  ["Stay well lit", "Keep your face clearly visible to the camera."],
+                ].map(([title, detail]) => (
+                  <div key={title} className="border border-white/12 px-3 py-3">
+                    <p className="text-[13px] text-white">{title}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-white/45">{detail}</p>
+                  </div>
+                ))}
               </div>
             </div>
 
-            <div className="shrink-0 grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/12 border border-white/12">
+            <div className="shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-px bg-white/12 border border-white/12">
               {baselineReadiness.items.map((item) => (
                 <div key={item.key} className="bg-black px-3 py-2 flex items-center justify-between gap-2">
                   <span className="text-[11px] text-white/65 truncate">{item.label}</span>
                   <span className={`shrink-0 text-[10px] tabular-nums ${item.ready ? "text-white" : "text-white/35"}`}>
-                    {item.ready ? "Ready" : `${item.count}/${item.key === "posture" ? 5 : MIN_VALID_READINGS}`}
+                    {item.ready ? "Ready" : `${item.count}/${MIN_VALID_READINGS}`}
                   </span>
                 </div>
               ))}
             </div>
 
-            {/* Gaze calibration step — "look directly at the camera" */}
-            {gazeCalibrationOpen && (
+            {/* Vitals instructions modal */}
+            {readingInstructionsOpen && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
                 <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
-                  <div className="flex items-center gap-3 mb-2">
-                    <ScanFace className="h-5 w-5 text-white/60" strokeWidth={1.6} />
-                    <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Posture baseline</p>
-                  </div>
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Vitals calibration</p>
                   <h2 className="mt-2 text-[24px] font-800 tracking-tight" style={{ fontWeight: 800 }}>
-                    Hold your natural posture.
+                    Stay still for 25 seconds.
                   </h2>
                   <p className="mt-4 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
-                    Sit comfortably and face your screen. This sets your neutral posture baseline so we can track shifts and fidgeting during the interview.
-                  </p>
-                  <p className="mt-3 text-[14px] leading-relaxed text-white/50" style={{ fontWeight: 300 }}>
-                    {mediaPipe.status === "error"
-                      ? <span className="text-red-400">Error: {mediaPipe.error}</span>
-                      : mediaPipe.status === "loading"
-                        ? "Loading perception models…"
-                        : mediaPipe.lookingAtCamera
-                          ? gazeCalibrationDone ? "Ready to collect posture readings" : "Great — hold steady for a moment…"
-                          : "Please look at your screen"}
-                  </p>
-                  <button
-                    onClick={() => {
-                      setGazeCalibrationOpen(false);
-                      setGazeCalibrationDone(true);
-                      setReadingInstructionsOpen(true);
-                    }}
-                    disabled={mediaPipe.status !== "ready"}
-                    className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70 disabled:opacity-40"
-                  >
-                    Continue
-                  </button>
-                  <button onClick={onCancel} className="ml-4 text-[13px] text-white/60">Cancel</button>
-                </div>
-              </div>
-            )}
-
-            {/* Reading instructions modal */}
-            {readingInstructionsOpen && !gazeCalibrationOpen && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
-                <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Before you begin</p>
-                  <h2 className="mt-2 text-[24px] font-800 tracking-tight" style={{ fontWeight: 800 }}>
-                    Read at your own pace.
-                  </h2>
-                  <p className="mt-4 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
-                    Please read the quotes aloud until every signal card says Ready and the minimum recording
-                    time has passed. You can repeat the quotes if you reach the end.
+                    Sit comfortably in a well-lit area, keep your face and shoulders in frame, and breathe
+                    normally. You do not need to speak.
                   </p>
                   <p className="mt-3 text-[15px] leading-relaxed text-white/70" style={{ fontWeight: 300 }}>
-                    Keep your camera in the exact position used during the framing check, and stay in that same position while you read so we can capture an accurate baseline.
+                    Keep the camera in the same position used during the framing check so we can capture a
+                    reliable personal baseline.
                   </p>
                   <button
                     onClick={() => setReadingInstructionsOpen(false)}
                     className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70"
                   >
-                    Begin reading
+                    Begin calibration
                   </button>
                 </div>
               </div>
