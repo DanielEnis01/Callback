@@ -64,7 +64,10 @@ Callback/
 ```
 
 Backboard is implemented in `backend/src/services/backboard.js` and exposed at
-`/api/backboard`. See [Backboard setup and lifecycle](backend/docs/backboard.md).
+`/api/backboard`. Open **Backboard dev tools** in the dashboard to seed three
+past interviews, inspect Q&A payloads, test repeat questions and progress notes,
+and simulate outages without API keys. Run `npm run backboard:demo` in `backend/`
+for a free terminal demo. See [Backboard setup and test guide](backend/docs/backboard.md).
 The other service modules remain skeletons with stubbed, throwing functions.
 
 ---

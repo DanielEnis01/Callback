@@ -1,4 +1,4 @@
-import { useState, FC, ElementType, ReactNode } from "react";
+import { useEffect, useState, FC, ElementType, ReactNode } from "react";
 import {
   LayoutDashboard,
   FileBarChart,
@@ -20,7 +20,7 @@ import { SessionMeeting } from "./SessionMeeting";
 import { CalibrationSession } from "./CalibrationSession";
 import { getBaseline, getInterviewProfile, saveInterviewProfile } from "./baselineStore";
 import { ResumeUpload } from "./ResumeUpload";
-import { getReadyResume, type ResumeDocument } from "./backboard";
+import { getReadyResume, getLatestAnalysis, type ResumeDocument } from "./backboard";
 import { SessionSetup } from "./SessionSetup";
 import { BackboardDevPanel } from "./BackboardDevPanel";
 
@@ -657,115 +657,27 @@ const SettingsView: FC<{ onLogout: () => void }> = ({ onLogout }) => {
 };
 
 // ── Results (single session) ──────────────────────────────────────
-const ResultsView: FC<{ onViewSessions: () => void }> = ({ onViewSessions }) => (
-  <>
-    <div className="flex items-end justify-between">
-      <div>
-        <span className="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-white/50 border border-white/15 px-2 py-0.5 mb-3">
-          <span className="h-1.5 w-1.5 bg-white" /> Most recent session
-        </span>
-        <h1 className="text-[30px] font-800 tracking-tight" style={{ fontWeight: 800 }}>Interview session</h1>
-        <p className="mt-1 text-[14px] text-white/45" style={{ fontWeight: 300 }}>Mock interview · 6:22 · Sept 12, 2026</p>
-      </div>
-      <div className="hidden sm:flex items-baseline gap-2 border border-white/12 px-5 py-3">
-        <span className="text-[32px] font-800 leading-none" style={{ fontWeight: 800 }}>78</span>
-        <span className="text-[14px] text-white/40">/100 · Strong</span>
-      </div>
-    </div>
-
-    <button
-      onClick={onViewSessions}
-      className="flex items-center justify-between border border-white/12 px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03]"
-    >
-      <span className="text-[13px] text-white/60">
-        Looking for an earlier session? Browse your full history in <span className="text-white">Sessions</span>.
-      </span>
-      <ChevronRight className="h-4 w-4 text-white/40 shrink-0" />
-    </button>
-
-    <div className="border border-white/12 px-5 py-4 text-[15px] text-white/80" style={{ fontWeight: 300 }}>
-      You came across as composed and prepared — steady breathing and specific answers — but tension around
-      compensation pulled your eyes off-camera and stacked up filler words.
-    </div>
-
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/12 border border-white/12">
-      {stats.map((s) => (
-        <div key={s.label} className="bg-black p-4 flex flex-col gap-2">
-          <span className="text-[11px] uppercase tracking-[0.14em] text-white/35">{s.label}</span>
-          <div className="flex items-baseline gap-1">
-            <span className="text-[26px] font-800 leading-none" style={{ fontWeight: 800 }}>{s.value}</span>
-            {s.unit && <span className="text-[13px] text-white/40">{s.unit}</span>}
-          </div>
-          <div className="flex items-center gap-1 text-[12px] text-white/50">
-            {s.up ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
-            <span>{s.delta}</span>
-            <span className="text-white/30">· {s.base}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <SectionCard title="What to work on" className="lg:col-span-2">
-        <ol className="flex flex-col divide-y divide-white/10">
-          {weaknesses.map((w, i) => (
-            <li key={i} className="flex gap-4 py-4 first:pt-0 last:pb-0">
-              <span className="text-[14px] font-800 text-white/30 w-5 shrink-0" style={{ fontWeight: 800 }}>{String(i + 1).padStart(2, "0")}</span>
-              <div className="flex flex-col gap-1">
-                <span className="text-[15px] font-medium">{w.title}</span>
-                <span className="text-[13px] text-white/50 leading-relaxed" style={{ fontWeight: 300 }}>{w.detail}</span>
-                <span className="mt-0.5 text-[11px] uppercase tracking-[0.12em] text-white/30">{w.metric}</span>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </SectionCard>
-
-      <SectionCard title="What went well">
-        <div className="flex flex-col divide-y divide-white/10">
-          {strengths.map((s, i) => (
-            <div key={i} className="py-4 first:pt-0 last:pb-0 flex flex-col gap-1">
-              <span className="text-[15px] font-medium">{s.title}</span>
-              <span className="text-[13px] text-white/50 leading-relaxed" style={{ fontWeight: 300 }}>{s.detail}</span>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-    </div>
-
-    <SectionCard title="Filler words / min — last 6 sessions" right={<span className="text-[12px] text-white/40">9.2 → 3.1</span>}>
-      <Sparkline data={trend} />
+const ResultsView: FC<{ onViewSessions: () => void }> = ({ onViewSessions }) => {
+  const [session, setSession] = useState(getLatestAnalysis);
+  useEffect(() => {
+    const refresh = () => setSession(getLatestAnalysis());
+    window.addEventListener("callback-analysis-saved", refresh);
+    return () => window.removeEventListener("callback-analysis-saved", refresh);
+  }, []);
+  const analysis = session?.analysis;
+  if (!session || !analysis) return <SectionCard title="Results"><p className="text-sm text-white/60">Complete an interview to see your analysis and comparisons with past answers.</p></SectionCard>;
+  return <>
+    <div><h1 className="text-3xl font-semibold">Interview results</h1><p className="mt-2 text-sm text-white/45">{new Date(session.startedAt).toLocaleString()}</p></div>
+    <SectionCard title="Session summary"><p className="text-white/80">{analysis.summary}</p>{analysis.source === "static" && <p className="mt-3 text-xs text-white/40">Text-based analysis is available. Detailed coaching could not be generated for this session.</p>}</SectionCard>
+    <SectionCard title="Skill Development"><div className="grid gap-6 sm:grid-cols-2">
+      <div><h3 className="mb-3 text-sm text-white/50">Strengths</h3>{analysis.strengths.length ? analysis.strengths.map((text, i) => <p key={i} className="mb-2 text-sm">{text}</p>) : <p className="text-sm text-white/40">Keep practicing to gather more evidence.</p>}</div>
+      <div><h3 className="mb-3 text-sm text-white/50">Next practice focus</h3>{analysis.weaknesses.map((text, i) => <p key={i} className="mb-2 text-sm">{text}</p>)}</div>
+    </div></SectionCard>
+    <SectionCard title="How your answers have changed">
+      {analysis.progressNotes.length ? <ul className="space-y-4">{analysis.progressNotes.map((note, i) => <li key={i} className="border-l-2 border-amber-200/50 pl-4"><p className="mb-1 text-xs text-white/40">Question {note.questionIndex + 1} · {session.interviewPlan?.[note.questionIndex]?.focus}</p><p className="text-sm leading-relaxed text-white/80">{note.note}</p><p className="mt-2 text-[11px] text-white/30">Compared with session {note.priorSessionId.slice(0, 8)}</p></li>)}</ul> : <p className="text-sm text-white/45">No previous answers were available for comparison in this session.</p>}
     </SectionCard>
-
-    <div className="border border-white/12">
-      <h2 className="text-[13px] uppercase tracking-[0.16em] text-white/40 px-5 pt-5 pb-3">Per-question breakdown</h2>
-      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-6 px-5 pb-2 text-[11px] uppercase tracking-[0.12em] text-white/30 border-b border-white/10">
-        <span>Question</span>
-        <span className="text-right">Time</span>
-        <span className="text-right">Fillers</span>
-        <span className="text-right">Eye %</span>
-      </div>
-      {questions.map((row, i) => (
-        <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-6 px-5 py-4 border-b border-white/10 last:border-b-0">
-          <div className="flex flex-col gap-1 min-w-0">
-            <span className="text-[14px] flex items-center gap-2">
-              {row.q}
-              {row.weak && <span className="text-[10px] uppercase tracking-[0.12em] border border-white/30 px-1.5 py-0.5 text-white/70">Revisit</span>}
-            </span>
-            <span className="text-[12px] text-white/45" style={{ fontWeight: 300 }}>{row.note}</span>
-          </div>
-          <span className="text-[14px] text-right tabular-nums">{row.time}</span>
-          <span className="text-[14px] text-right tabular-nums">{row.fillers}</span>
-          <span className="text-[14px] text-right tabular-nums">{row.eye}%</span>
-        </div>
-      ))}
-    </div>
-
-    <p className="text-[11px] text-white/25 leading-relaxed">
-      Indicators are heuristic estimates for coaching, not a clinical or certified measurement. Trends are shown against
-      your own first-session baseline.
-    </p>
-  </>
-);
+    <button onClick={onViewSessions} className="w-fit border border-white/20 px-4 py-2 text-sm">View sessions</button>
+  </>;
+};
 
 export default Dashboard;

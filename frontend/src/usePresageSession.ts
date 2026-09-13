@@ -167,7 +167,7 @@ export function usePresageSession(active: boolean): PresageSession {
       }
       if (typeof Buffer !== "undefined" && Buffer.isBuffer?.(metrics)) return;
 
-      const expression = last(metrics?.face?.expression);
+      const expression = last<{ scores?: { type: number; confidence: number }[] }>(metrics?.face?.expression);
       if (expression?.scores?.length) {
         for (const s of expression.scores) {
           const name = EXPRESSION_TYPE_NAMES[s.type] ?? String(s.type);

@@ -1,81 +1,46 @@
-import { Router, json, raw } from "express";
-import * as backboard from "../services/backboard.js";
-import { BackboardError } from "../integrations/backboard/backboardClient.js";
+import { Router, json } from "express";
+import { getMemoryRuntime, requireUser, devToolsEnabled } from "../services/memoryRuntime.js";
+import { buildMemoryRecords, memoryPrompt } from "../services/memoryRecords.js";
+import { seedHistory } from "../services/memoryDev.js";
 
-// Export a factory so the HTTP contract can be verified without paid API calls.
-export function createBackboardRouter(service = backboard) {
+export function createBackboardRouter(runtimeFor = getMemoryRuntime) {
   const router = Router();
-  router.use(json({ limit: "2mb" }));
-  const handle = (fn) => (req, res, next) => Promise.resolve().then(() => fn(req, res)).catch(next);
-
-  router.post("/assistants", handle(async (req, res) => {
-    res.status(201).json(await service.createUserAssistant(req.body?.userId));
+  router.use(json({ limit: "2mb" }), requireUser);
+  const handle = (fn) => (req, res, next) => Promise.resolve().then(async () => fn(req, res, await runtimeFor(req))).catch(next);
+  router.get("/status", handle(async (req, res, runtime) => {
+    const state = await runtime.store.transaction(req.user.userId, (value) => ({ assistantId: value.assistantId, receipts: value.records }));
+    res.json({ mode: runtime.mode, configured: runtime.mode !== "live" || !!process.env.BACKBOARD_API_KEY, persistence: runtime.mode === "live" && process.env.DATABASE_URL ? "postgres" : "local_file", ...state });
   }));
-
-  router.post("/assistants/:assistantId/job-posting", raw({ type: "application/pdf", limit: "10mb" }), handle(async (req, res) => {
-    res.status(201).json(await service.setupJobPosting({
-      assistantId: req.params.assistantId,
-      pdfBuffer: req.body,
-      filename: "job-posting.pdf",
-    }));
+  router.post("/memories/search", handle(async (req, res, { memory }) => {
+    const { query, kind, limit, excludeSessionId, weakOnly } = req.body || {};
+    res.json(await memory.retrieveMemory({ userId: req.user.userId, query, kind, limit, excludeSessionId, weakOnly }));
   }));
-
-  router.post("/assistants/:assistantId/resumes", raw({ type: "application/pdf", limit: "10mb" }), handle(async (req, res) => {
-    res.status(202).json(await service.uploadResume({
-      assistantId: req.params.assistantId,
-      pdfBuffer: req.body,
-      filename: req.query.filename,
-    }));
+  router.get("/sessions", handle(async (req, res, { store }) => {
+    res.json({ sessions: await store.listSessions(req.user.userId) });
   }));
-
-  router.get("/documents/:documentId/status", handle(async (req, res) => {
-    res.json(await service.getDocumentStatus(req.params.documentId));
+  router.get("/sessions/:sessionId/preview", handle(async (req, res, { interview }) => {
+    const session = await interview.getSession(req.user.userId, req.params.sessionId);
+    const payload = buildMemoryRecords(session);
+    res.json({ ...payload, memorySyncedAt: session.memorySyncedAt });
   }));
-
-  router.delete("/documents/:documentId", handle(async (req, res) => {
-    await service.deleteDocument(req.params.documentId);
-    res.sendStatus(204);
+  router.post("/sessions/:sessionId/sync", handle(async (req, res, { interview, memory }) => {
+    await interview.getSession(req.user.userId, req.params.sessionId);
+    res.json(await memory.syncSession(req.user.userId, req.params.sessionId));
   }));
-
-  router.post("/assistants/:assistantId/sessions/complete", handle(async (req, res) => {
-    res.json(await service.afterSessionEnds({
-      assistantId: req.params.assistantId,
-      sessionId: req.body?.sessionId,
-      transcriptText: req.body?.transcriptText,
-      summaryText: req.body?.summaryText,
-    }));
+  router.use("/dev", (_req, res, next) => devToolsEnabled() ? next() : res.sendStatus(404));
+  router.post("/dev/seed", handle(async (req, res, runtime) => {
+    res.json(await seedHistory(req.user.userId, runtime));
   }));
-
-  router.post("/assistants/:assistantId/sessions/start", handle(async (req, res) => {
-    res.json(await service.startSession({
-      assistantId: req.params.assistantId,
-      trendSentence: req.body?.trendSentence,
-      practiceFocus: req.body?.practiceFocus,
-      resumeDocumentId: req.body?.resumeDocumentId,
-      candidateName: req.body?.candidateName,
-      targetRoles: req.body?.targetRoles,
-      jobPosting: req.body?.jobPosting,
-    }));
+  router.post("/dev/planner-context", handle(async (req, res, { memory }) => {
+    const [questions, notes] = await Promise.all([
+      memory.retrieveMemory({ userId: req.user.userId, query: req.body?.query || "Software engineer", limit: 10 }), memory.recentNotes(req.user.userId),
+    ]);
+    res.json({ questions: questions.memories, notes, prompt: memoryPrompt({ questions: questions.memories, notes }) });
   }));
-
-  router.post("/assistants/:assistantId/memories/search", handle(async (req, res) => {
-    res.json(await service.retrieveMemory({
-      assistantId: req.params.assistantId,
-      query: req.body?.query,
-      limit: req.body?.limit,
-    }));
-  }));
-
   router.use((error, _req, res, _next) => {
-    const status = error.statusCode || error.status || 500;
-    // Upstream response bodies can contain account details; keep them server-side.
-    const message = error instanceof BackboardError
-      ? status === 504 ? "Backboard request timed out" : "Backboard request failed"
-      : status < 500 || status === 503 ? error.message : "Backboard integration failed";
-    res.status(status).json({ error: message });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: status < 500 ? error.message : "Memory service unavailable. Saved sessions are retained." });
   });
-
   return router;
 }
-
 export default createBackboardRouter();

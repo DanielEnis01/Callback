@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { API_BASE, interviewHeaders } from "./backboard";
 
-const GEMINI_SPEAK_URL = "http://localhost:3001/api/services/gemini/speak";
-const TTS_ONLY_URL = "http://localhost:3001/api/tts/speak";
-const STT_URL = "http://localhost:3001/api/stt/transcribe";
+const GEMINI_SPEAK_URL = `${API_BASE}/api/services/gemini/speak`;
+const TTS_ONLY_URL = `${API_BASE}/api/tts/speak`;
+const STT_URL = `${API_BASE}/api/stt/transcribe`;
 
 const DEFAULT_OPENING_GREETING =
   "Hi! Welcome to your mock interview session. I'm your Callback recruiter. " +
@@ -19,6 +20,8 @@ const MIN_SPEECH_MS = 350;
 export interface ConversationTurn {
   role: "user" | "model";
   parts: [{ text: string }];
+  questionIndex?: number;
+  isClarifying?: boolean;
 }
 
 export interface ConversationControls {
@@ -39,6 +42,8 @@ export interface ConversationControls {
 }
 
 export interface ConversationOptions {
+  sessionId?: string;
+  enabled?: boolean;
   /** Extra context (resume, job posting) to append to the Gemini system prompt. */
   systemContext?: string;
   /** Custom opening message from Backboard's prepareInterview (replaces the default greeting). */
@@ -82,6 +87,7 @@ export function useConversation(options: ConversationOptions = {}): Conversation
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechStartTimeRef = useRef<number>(0);
   const isSpeakingRef = useRef(false);    // VAD state: are we in a speech segment?
+  const completedRef = useRef(false);
 
   // "Latest ref" pattern — lets VAD poll callbacks call these without stale closures.
   const sendMessageRef = useRef<(text: string) => Promise<void>>(async () => {});
@@ -297,7 +303,7 @@ export function useConversation(options: ConversationOptions = {}): Conversation
 
   useEffect(() => {
     sendMessageRef.current = async (text: string) => {
-      if (!text.trim()) return;
+      if (!text.trim() || options.enabled === false || completedRef.current) return;
 
       cancelAudio();
       stopVAD();
@@ -309,12 +315,13 @@ export function useConversation(options: ConversationOptions = {}): Conversation
       abortRef.current = controller;
 
       try {
-        const res = await fetch(GEMINI_SPEAK_URL, {
+        const res = await fetch(options.sessionId ? `${API_BASE}/api/services/gemini/interview-turn` : GEMINI_SPEAK_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await interviewHeaders(),
           body: JSON.stringify({
             message: text,
             history: historyRef.current,
+            sessionId: options.sessionId,
             ...(options.systemContext ? { systemContext: options.systemContext } : {}),
           }),
           signal: controller.signal,
@@ -328,17 +335,19 @@ export function useConversation(options: ConversationOptions = {}): Conversation
           throw new Error(`Recruiter error (${res.status}): ${hint}`);
         }
 
-        const { text: replyText, audio } = await res.json();
+        const { text: replyText, audio, askedQuestionIndex, isClarifying, answeredQuestionIndex, answeredIsClarifying, done } = await res.json();
         if (controller.signal.aborted) return;
 
         // Update multi-turn history.
         const next: ConversationTurn[] = [
           ...historyRef.current,
-          { role: "user", parts: [{ text }] },
-          { role: "model", parts: [{ text: replyText }] },
+          { role: "user", parts: [{ text }], ...(options.sessionId ? { questionIndex: answeredQuestionIndex, isClarifying: answeredIsClarifying } : {}) },
+          { role: "model", parts: [{ text: replyText }], ...(options.sessionId ? { questionIndex: askedQuestionIndex, isClarifying } : {}) },
         ];
         historyRef.current = next;
         setHistory(next);
+        if (done) { completedRef.current = true; shouldListenRef.current = false; stopListening(); }
+        if (!audio) return;
 
         // Decode base64 → play.
         const binary = atob(audio);
@@ -377,11 +386,13 @@ export function useConversation(options: ConversationOptions = {}): Conversation
   // ── Mount: greeting → start loop ─────────────────────────────────────────────
 
   useEffect(() => {
-    if (greetingPlayedRef.current) return;
+    if (options.enabled === false || greetingPlayedRef.current) return;
     greetingPlayedRef.current = true;
+    let disposed = false;
 
     const run = async () => {
       await new Promise<void>((r) => setTimeout(r, 700));
+      if (disposed) return;
 
       aiSpeakingRef.current = true;
       setAiSpeaking(true);
@@ -391,6 +402,9 @@ export function useConversation(options: ConversationOptions = {}): Conversation
 
       try {
         const greeting = options.openingMessage || DEFAULT_OPENING_GREETING;
+        const opening: ConversationTurn = { role: "model", parts: [{ text: greeting }], ...(options.sessionId ? { questionIndex: 0, isClarifying: false } : {}) };
+        historyRef.current = [opening];
+        setHistory([opening]);
         const res = await fetch(TTS_ONLY_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -409,13 +423,15 @@ export function useConversation(options: ConversationOptions = {}): Conversation
         aiSpeakingRef.current = false;
         setAiSpeaking(false);
         // Open the mic after the greeting finishes.
-        await startListening();
+        if (!disposed) await startListening();
       }
     };
 
     run();
 
     return () => {
+      disposed = true;
+      greetingPlayedRef.current = false;
       shouldListenRef.current = false;
       stopVAD();
       micStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -423,7 +439,7 @@ export function useConversation(options: ConversationOptions = {}): Conversation
       cancelAudio();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [options.enabled, options.sessionId]);
 
   return {
     listening,

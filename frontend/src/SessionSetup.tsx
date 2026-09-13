@@ -1,29 +1,14 @@
 import { useRef, useState, FC } from "react";
 import { X, FileText, UploadCloud, Briefcase, ArrowRight, Target } from "lucide-react";
 import { getInterviewProfile, saveSessionContext } from "./baselineStore";
+import { getReadyResume, setSessionResume } from "./backboard";
 
 interface SessionSetupProps {
   onStart: () => void;
   onCancel: () => void;
 }
 
-/**
- * Gate shown before every session (not just the first): pick which resume
- * this session is for, paste the job posting being practiced for, and
- * optionally pick a single weakness to target, then start. All three get
- * saved as this session's SessionContext — the resume and job posting
- * Backboard's RAG layer will eventually be pointed at, once there's a
- * backend to hand them to (see baselineStore.ts's SessionContext for the
- * shape). The weakness dropdown is mock data (MOCK_WEAKNESSES below)
- * standing in for a real per-user tracked list that doesn't exist yet, and
- * is deliberately single-select so the AI has one clear goal per session
- * instead of splitting focus across several.
- *
- * Distinct from calibration's one-time profile: that collects a baseline
- * resume once, this collects the (resume, job posting, weakness) tuple
- * fresh for every session, since the role being practiced for changes
- * session to session but the calibrated body/voice baseline doesn't.
- */
+// Each session supplies its current resume PDF and job posting directly to Gemini.
 // Mock stand-in for a real per-user weakness list, which will eventually
 // come from tracked feedback across past sessions. Picking from here just
 // primes the interviewer AI on what to probe for before it starts asking
@@ -46,6 +31,7 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
 
   const [sessionResumeFile, setSessionResumeFile] = useState<File | null>(null);
   const [resumeError, setResumeError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
   const [draggingResume, setDraggingResume] = useState(false);
   const [jobPosting, setJobPosting] = useState("");
   const [selectedWeakness, setSelectedWeakness] = useState("");
@@ -66,7 +52,7 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
   // here only overrides it for this session, it doesn't touch the profile.
   const effectiveResume = sessionResumeFile
     ? { name: sessionResumeFile.name, size: sessionResumeFile.size }
-    : profile?.resume ?? null;
+    : getReadyResume();
   const usingProfileResume = !sessionResumeFile && !!profile?.resume;
 
   const resumeSize = (bytes: number) =>
@@ -91,9 +77,12 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-8 sm:px-8">
         <form
           className="mx-auto flex w-full max-w-2xl flex-col gap-6"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            if (!effectiveResume) return;
+            if (!effectiveResume || starting) return;
+            setStarting(true);
+            try {
+            await setSessionResume(sessionResumeFile);
             saveSessionContext({
               setAt: new Date().toISOString(),
               resume: effectiveResume,
@@ -101,6 +90,8 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
               targetWeakness: selectedWeakness,
             });
             onStart();
+            } catch (error) { setResumeError(error instanceof Error ? error.message : "Unable to prepare resume"); }
+            finally { setStarting(false); }
           }}
         >
           <div>
@@ -211,7 +202,7 @@ export const SessionSetup: FC<SessionSetupProps> = ({ onStart, onCancel }) => {
             </button>
             <button
               type="submit"
-              disabled={!canStart}
+              disabled={!canStart || starting}
               className="flex h-11 items-center gap-2 bg-white px-5 text-[13px] font-semibold text-black transition-opacity disabled:cursor-not-allowed disabled:opacity-30 active:opacity-70"
             >
               Start session <ArrowRight className="h-4 w-4" strokeWidth={2} />

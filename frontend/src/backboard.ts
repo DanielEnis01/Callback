@@ -1,4 +1,4 @@
-import { getInterviewProfile, saveInterviewProfile } from "./baselineStore.ts";
+import { getInterviewProfile, getSessionContext, saveInterviewProfile } from "./baselineStore.ts";
 
 export interface ResumeDocument {
   documentId: string;
@@ -7,204 +7,142 @@ export interface ResumeDocument {
   fingerprint: string;
   status: "pending" | "processing" | "indexed" | "error";
 }
-
-interface InterviewContext {
-  userId: string;
-  assistantId?: string;
-  resume?: ResumeDocument;
-  pendingResume?: ResumeDocument;
+export interface PlanQuestion {
+  text: string;
+  type: "behavioral" | "resume" | "job_posting";
+  focus: string;
+  repeatOf?: { sessionId: string; askedAt: string };
 }
-
-export interface PreparedInterview {
-  content: string;
-  thread_id: string;
-  assistant_id?: string;
+export interface InterviewSession {
+  sessionId: string;
+  startedAt: string;
+  interviewPlan: PlanQuestion[] | null;
+  transcript: { role: "user" | "model"; parts: { text: string }[]; questionIndex?: number; isClarifying?: boolean }[];
+  memorySyncedAt: string | null;
+  analysis: null | {
+    summary: string; strengths: string[]; weaknesses: string[]; source: string;
+    progressNotes: { questionIndex: number; priorSessionId: string; note: string }[];
+    staticSignals: { answers: { wordCount: number; starScore: number; quantified: boolean }[] };
+  };
 }
-
-const STORAGE_KEY = "callback.backboard.v1";
-const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
+export interface PreparedInterview { content: string; thread_id: string; questions: PlanQuestion[]; source: string }
+export const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 export const MAX_RESUME_BYTES = 10 * 1024 * 1024;
-let assistantRequest: Promise<string> | null = null;
-let changingResume = false;
-
-function readContext(): InterviewContext | null {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw ? JSON.parse(raw) : null;
+const RESUME_KEY = "callback.resume.local.v1";
+let sessionPdf: File | null = null;
+let authTokenProvider: (() => Promise<string | null>) | undefined;
+let authenticatedUserId: string | null = null;
+export const setAuthTokenProvider = (provider: () => Promise<string | null>, userId: string | null) => {
+  authTokenProvider = provider; authenticatedUserId = userId;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("callback-analysis-saved"));
+};
+const resultKey = () => authenticatedUserId ? `callback.latest-analysis:firebase:${authenticatedUserId}`
+  : import.meta.env?.DEV ? `callback.latest-analysis:${getDevUser()}:${getMemoryMode()}` : null;
+export function getDevUser() {
+  let id = localStorage.getItem("callback.dev.user");
+  if (!id) { id = `dev-${crypto.randomUUID()}`; localStorage.setItem("callback.dev.user", id); }
+  return id;
 }
-
-function saveContext(context: InterviewContext) {
-  // Fail visibly if persistence is unavailable: losing these IDs would create
-  // another assistant or upload the same resume on the next visit.
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(context));
-}
-
-export function getSavedResume(): ResumeDocument | null {
-  try {
-    const context = readContext();
-    return context?.pendingResume ?? context?.resume ?? null;
-  } catch {
-    return null;
+export function getMemoryMode() { return localStorage.getItem("callback.memory.mode") || "mock"; }
+export async function interviewHeaders() {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (import.meta.env?.DEV) {
+    headers["X-Callback-Dev-User"] = getDevUser();
+    headers["X-Callback-Memory-Mode"] = getMemoryMode();
   }
+  const token = await authTokenProvider?.();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
 }
-
-export function getReadyResume(): ResumeDocument | null {
-  try {
-    const context = readContext();
-    return !context?.pendingResume && context?.resume?.status === "indexed" ? context.resume : null;
-  } catch { return null; }
-}
-
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}/api/backboard${path}`, {
-      ...options,
-      signal: options.signal ?? AbortSignal.timeout(90000),
-    });
-  } catch {
-    throw new Error("Cannot reach the interview service. Please try again.");
-  }
-  if (response.status === 204) return undefined as T;
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error || "The interview service could not complete the request.");
-  if (!data) throw new Error("The interview service returned an empty response.");
+export async function callbackApi<T>(path: string, body?: unknown, method = body === undefined ? "GET" : "POST"): Promise<T> {
+  const response = await fetch(`${API_BASE}/api${path}`, { method, headers: await interviewHeaders(),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(45000) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
 }
 
-async function ensureAssistant(): Promise<string> {
-  const saved = readContext();
-  if (saved?.assistantId) return saved.assistantId;
-  if (!assistantRequest) {
-    assistantRequest = (async () => {
-      // Login is currently a mock. Keep one anonymous profile per browser/device
-      // until the application's real account layer provides an authenticated ID.
-      const context = saved ?? { userId: crypto.randomUUID() };
-      saveContext(context);
-      const assistant = await api<{ assistant_id: string }>("/assistants", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: context.userId }),
-      });
-      if (!assistant.assistant_id) throw new Error("The interview service did not create a profile.");
-      saveContext({ ...context, assistantId: assistant.assistant_id });
-      return assistant.assistant_id;
-    })().finally(() => { assistantRequest = null; });
-  }
-  return assistantRequest;
-}
-
-export function validateResume(file: File): void {
-  if (!(file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))) {
-    throw new Error("Please choose a PDF resume.");
-  }
-  if (!file.size || file.size > MAX_RESUME_BYTES) throw new Error("Choose a nonempty PDF resume of at most 10 MB.");
-}
-
-async function finishPendingResume(onProgress: (message: string) => void): Promise<ResumeDocument> {
-  const context = readContext();
-  const pending = context?.pendingResume;
-  if (!context || !pending) {
-    if (context?.resume) return context.resume;
-    throw new Error("Upload your resume before starting an interview.");
-  }
-  onProgress("Reading your resume…");
-  const deadline = Date.now() + 90000;
-  while (pending.status !== "indexed") {
-    if (Date.now() >= deadline) throw new Error("Your resume is still processing. Choose Retry to check it again.");
-    const result = await api<{ status: ResumeDocument["status"] }>(`/documents/${encodeURIComponent(pending.documentId)}/status`);
-    pending.status = result.status;
-    saveContext(context);
-    if (pending.status === "error") throw new Error("This PDF could not be read. Upload a text-based PDF or choose another file.");
-    if (pending.status !== "indexed") await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-  // Keep the previous resume until its replacement is ready. A failed deletion
-  // leaves the pending ID saved for retry and blocks starting with mixed resumes.
-  if (context.resume && context.resume.documentId !== pending.documentId) {
-    onProgress("Replacing your previous resume…");
-    await api(`/documents/${encodeURIComponent(context.resume.documentId)}`, { method: "DELETE" });
-  }
-  context.resume = pending;
-  delete context.pendingResume;
-  saveContext(context);
-  const profile = getInterviewProfile();
-  if (profile) saveInterviewProfile({ ...profile, resume: { name: pending.name, size: pending.size, documentId: pending.documentId } });
-  return pending;
-}
-
-export async function uploadResume(file: File, onProgress = (_message: string) => {}): Promise<ResumeDocument> {
-  if (changingResume) throw new Error("A resume update is already in progress.");
-  validateResume(file);
-  changingResume = true;
-  try {
-    const bytes = await file.arrayBuffer();
-    if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") throw new Error("Please choose a valid PDF resume.");
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    onProgress("Preparing your interview profile…");
-    const assistantId = await ensureAssistant();
-    const context = readContext()!;
-    if (context.pendingResume && (context.pendingResume.fingerprint !== fingerprint || context.pendingResume.status === "error")) {
-      await api(`/documents/${encodeURIComponent(context.pendingResume.documentId)}`, { method: "DELETE" });
-      delete context.pendingResume;
-      saveContext(context);
-    }
-    if (!context.pendingResume && context.resume?.fingerprint === fingerprint) return context.resume;
-    if (!context.pendingResume) {
-      onProgress("Uploading your resume…");
-      const doc = await api<{ document_id: string; status: ResumeDocument["status"] }>(
-        `/assistants/${encodeURIComponent(assistantId)}/resumes?filename=${encodeURIComponent(file.name)}`,
-        { method: "POST", headers: { "Content-Type": "application/pdf" }, body: file },
-      );
-      if (!doc.document_id) throw new Error("The interview service did not return an upload ID.");
-      context.pendingResume = { documentId: doc.document_id, name: file.name, size: file.size, fingerprint, status: doc.status };
-      saveContext(context);
-    }
-    return await finishPendingResume(onProgress);
-  } finally {
-    changingResume = false;
-  }
-}
-
-export async function retryResume(onProgress = (_message: string) => {}): Promise<ResumeDocument> {
-  if (changingResume) throw new Error("A resume update is already in progress.");
-  changingResume = true;
-  try { return await finishPendingResume(onProgress); }
-  finally { changingResume = false; }
-}
-
-export async function removeResume(): Promise<void> {
-  if (changingResume) throw new Error("A resume update is already in progress.");
-  changingResume = true;
-  try {
-    const context = readContext();
-    if (!context) return;
-    for (const key of ["pendingResume", "resume"] as const) {
-      const resume = context[key];
-      if (resume) {
-        await api(`/documents/${encodeURIComponent(resume.documentId)}`, { method: "DELETE" });
-        delete context[key];
-        saveContext(context);
-      }
-    }
-    const profile = getInterviewProfile();
-    if (profile) saveInterviewProfile({ ...profile, resume: null });
-  } finally { changingResume = false; }
-}
-
-export async function prepareInterview(): Promise<PreparedInterview> {
-  if (changingResume) throw new Error("Wait for your resume upload to finish before starting.");
-  const context = readContext();
-  if (!context?.assistantId || !context.resume) throw new Error("Upload your resume in Settings or calibration before starting an interview.");
-  if (context.pendingResume) throw new Error("Finish or remove the pending resume upload before starting an interview.");
-  const profile = getInterviewProfile();
-  const response = await api<PreparedInterview>(`/assistants/${encodeURIComponent(context.assistantId)}/sessions/start`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      resumeDocumentId: context.resume.documentId,
-      candidateName: profile?.name?.trim() || undefined,
-      targetRoles: profile?.targetRoles?.trim() || undefined,
-      jobPosting: profile?.jobPosting?.trim() || undefined,
-    }),
+// PDFs stay on this device and are sent directly to Gemini with each new plan.
+// Backboard never receives a document or a full job posting.
+async function pdfStore(operation: "get" | "put" | "delete", file?: File): Promise<File | null> {
+  return new Promise((resolve, reject) => {
+    const opening = indexedDB.open("callback-resume", 1);
+    opening.onupgradeneeded = () => opening.result.createObjectStore("files");
+    opening.onerror = () => reject(opening.error);
+    opening.onsuccess = () => {
+      const db = opening.result;
+      const tx = db.transaction("files", operation === "get" ? "readonly" : "readwrite");
+      const files = tx.objectStore("files");
+      const request = operation === "get" ? files.get("resume") : operation === "put" ? files.put(file, "resume") : files.delete("resume");
+      tx.oncomplete = () => { db.close(); resolve(operation === "get" ? request.result || null : file || null); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    };
   });
-  if (!response.content?.trim() || !response.thread_id) throw new Error("An opening question could not be prepared. Please try again.");
-  return response;
+}
+export function getSavedResume(): ResumeDocument | null {
+  try { return JSON.parse(localStorage.getItem(RESUME_KEY) || "null"); } catch { return null; }
+}
+export const getReadyResume = getSavedResume;
+export async function validateResume(file: File) {
+  if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") throw new Error("Please choose a PDF resume.");
+  if (file.size > MAX_RESUME_BYTES) throw new Error("Choose a PDF of at most 10 MB.");
+  if (new TextDecoder().decode((await file.arrayBuffer()).slice(0, 5)) !== "%PDF-") throw new Error("Please choose a valid PDF resume.");
+}
+export async function setSessionResume(file: File | null) {
+  if (file) await validateResume(file);
+  sessionPdf = file;
+}
+export async function uploadResume(file: File, onProgress = (_message: string) => {}): Promise<ResumeDocument> {
+  await validateResume(file);
+  onProgress("Saving your resume on this device…");
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  await pdfStore("put", file);
+  const resume: ResumeDocument = { documentId: `local:${fingerprint}`, name: file.name, size: file.size, fingerprint, status: "indexed" };
+  localStorage.setItem(RESUME_KEY, JSON.stringify(resume));
+  const profile = getInterviewProfile();
+  if (profile) saveInterviewProfile({ ...profile, resume });
+  return resume;
+}
+export async function retryResume(_onProgress = (_message: string) => {}): Promise<ResumeDocument> {
+  const resume = getSavedResume();
+  if (!resume || !await pdfStore("get")) throw new Error("Select your PDF again to save it on this device.");
+  return resume;
+}
+export async function removeResume(): Promise<void> {
+  await pdfStore("delete");
+  localStorage.removeItem(RESUME_KEY);
+  sessionPdf = null;
+  const profile = getInterviewProfile();
+  if (profile) saveInterviewProfile({ ...profile, resume: null });
+}
+async function resumeBase64() {
+  const saved = getReadyResume();
+  const file = sessionPdf || (saved ? await pdfStore("get") : null);
+  if (saved && !file) throw new Error("Your saved PDF is no longer on this device. Select it again in Settings.");
+  if (!file) return undefined;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+  return btoa(binary);
+}
+export async function prepareInterview(): Promise<PreparedInterview> {
+  const profile = getInterviewProfile();
+  const context = getSessionContext();
+  const session = await callbackApi<InterviewSession>("/services/sessions", {
+    jobPostingText: context?.jobPosting || profile?.jobPosting || "",
+    positionLabel: profile?.targetRoles || "", targetedWeakness: context?.targetWeakness || null,
+  });
+  const plan = await callbackApi<{ questions: PlanQuestion[]; source: string }>("/services/gemini/interview-plan", { sessionId: session.sessionId, resumePdf: await resumeBase64() });
+  return { content: plan.questions[0].text, thread_id: session.sessionId, ...plan };
+}
+export async function completeInterview(sessionId: string, transcript: InterviewSession["transcript"]) {
+  const result = await callbackApi<{ session: InterviewSession; memory: { status: string } }>("/services/analysis/transcript", { sessionId, transcript });
+  const key = resultKey();
+  if (key) localStorage.setItem(key, JSON.stringify(result.session));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("callback-analysis-saved"));
+  return result;
+}
+export function getLatestAnalysis(): InterviewSession | null {
+  try { const key = resultKey(); return key ? JSON.parse(localStorage.getItem(key) || "null") : null; } catch { return null; }
 }

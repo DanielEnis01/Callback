@@ -1,8 +1,45 @@
 import { Router } from "express";
 import { testRecruiterPrompt } from "../services/gemini.js";
 import { synthesizeSpeech } from "../services/elevenlabs.js";
+import { getMemoryRuntime, requireUser } from "../services/memoryRuntime.js";
+import { validatePlan } from "../services/interview.js";
 
 const router = Router();
+
+const interviewRoute = (fn) => [requireUser, (req, res, next) => Promise.resolve().then(async () => fn(req, res, await getMemoryRuntime(req))).catch(next)];
+router.post("/sessions", ...interviewRoute(async (req, res, { interview }) => {
+  res.status(201).json(await interview.createSession(req.user.userId, req.body));
+}));
+router.patch("/sessions/:sessionId/plan", ...interviewRoute(async (req, res, { interview, store }) => {
+  const session = await interview.getSession(req.user.userId, req.params.sessionId);
+  if (session.interviewPlan) return res.status(409).json({ error: "The saved plan is immutable" });
+  const plan = validatePlan(req.body?.questions).map(({ repeatOf: _repeat, ...question }) => question);
+  await store.transaction(req.user.userId, (state) => {
+    if (state.sessions[session.sessionId].interviewPlan) throw Object.assign(new Error("The saved plan is immutable"), { statusCode: 409 });
+    state.sessions[session.sessionId].interviewPlan = plan;
+  });
+  res.json({ questions: plan });
+}));
+router.post("/gemini/interview-plan", ...interviewRoute(async (req, res, { interview }) => {
+  res.json(await interview.planSession(req.user.userId, req.body?.sessionId, req.body?.resumePdf));
+}));
+router.post("/analysis/transcript", ...interviewRoute(async (req, res, { interview }) => {
+  res.json(await interview.analyzeSession(req.user.userId, req.body?.sessionId, req.body?.transcript));
+}));
+router.post("/gemini/interview-turn", ...interviewRoute(async (req, res, { interview }) => {
+  if (typeof req.body?.message !== "string" || !req.body.message.trim() || req.body.message.length > 20000) return res.status(400).json({ error: "message is required (up to 20,000 characters)" });
+  const turn = await interview.interviewTurn(req.user.userId, req.body.sessionId, req.body);
+  let audio = null;
+  if (req.body.speak !== false) {
+    try {
+      const stream = await synthesizeSpeech({ text: turn.text });
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      audio = Buffer.concat(chunks).toString("base64");
+    } catch { /* Keep the text turn and transcript when voice is unavailable. */ }
+  }
+  res.json({ ...turn, audio });
+}));
 
 // Placeholder status endpoints — one per integration, wired up as each
 // service module gets implemented.
@@ -70,6 +107,10 @@ router.post("/gemini/speak", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+router.use((error, _req, res, _next) => {
+  res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : "Interview service unavailable" });
 });
 
 export default router;

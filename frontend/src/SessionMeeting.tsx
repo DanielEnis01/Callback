@@ -6,7 +6,7 @@ import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
 import { useConversation } from "./useConversation";
 import { DevPanel } from "./DevPanel";
-import { getReadyResume, prepareInterview } from "./backboard";
+import { completeInterview, prepareInterview, type PreparedInterview } from "./backboard";
 import { getInterviewProfile, getSessionContext } from "./baselineStore";
 
 interface SessionMeetingProps {
@@ -43,6 +43,10 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   // ── Build interview context for Gemini ─────────────────────────────────────
   const [openingMessage, setOpeningMessage] = useState<string | undefined>();
+  const [prepared, setPrepared] = useState<PreparedInterview | null>(null);
+  const [preparationError, setPreparationError] = useState<string | null>(null);
+  const [ending, setEnding] = useState(false);
+  const preparationRef = useRef<Promise<PreparedInterview> | null>(null);
 
   const systemContext = useMemo(() => {
     const profile = getInterviewProfile();
@@ -58,21 +62,40 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   // Try to get a personalized opening question from Backboard
   useEffect(() => {
-    const resume = getReadyResume();
-    if (!resume) return; // no resume indexed — fall back to default greeting
-    prepareInterview()
+    let active = true;
+    preparationRef.current ||= prepareInterview();
+    preparationRef.current
       .then((prepared) => {
+        if (!active) return;
+        setPrepared(prepared);
         if (prepared.content?.trim()) {
           setOpeningMessage(prepared.content);
         }
       })
       .catch((err) => {
-        console.warn("[SessionMeeting] Backboard prepareInterview failed, using default greeting:", err);
+        if (active) setPreparationError(err instanceof Error ? err.message : "Interview preparation failed");
       });
+    return () => { active = false; };
   }, []);
 
   // ── Voice conversation loop (STT → Gemini → ElevenLabs TTS) ─────────────────
-  const conversation = useConversation({ systemContext, openingMessage });
+  const conversation = useConversation({ systemContext, openingMessage, sessionId: prepared?.thread_id, enabled: !!prepared });
+  const currentQuestionIndex = [...conversation.history].reverse().find((turn) => turn.role === "model")?.questionIndex ?? 0;
+  const currentQuestion = prepared?.questions[currentQuestionIndex];
+  const finish = async () => {
+    if (ending) return;
+    conversation.stopListening();
+    conversation.cancelAudio();
+    if (!prepared) { onEnd(); return; }
+    setEnding(true);
+    try {
+      await completeInterview(prepared.thread_id, conversation.history);
+      onEnd();
+    } catch (error) {
+      setPreparationError(error instanceof Error ? error.message : "Unable to save analysis. Please retry.");
+      setEnding(false);
+    }
+  };
 
   // Session clock
   useEffect(() => {
@@ -127,6 +150,12 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
           </span>
         </div>
       </header>
+      <div className="border-b border-white/12 px-6 py-3 text-sm" aria-live="polite">
+        {preparationError ? <span className="text-red-300">{preparationError}</span> : prepared ? (
+          <><p className="text-white/70">Question {currentQuestionIndex + 1} of 5 · {currentQuestion?.text}</p>
+          {currentQuestion?.repeatOf && <p className="mt-1 text-amber-200">You struggled with this one on {new Date(currentQuestion.repeatOf.askedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })} — let’s try again.</p>}</>
+        ) : "Preparing your interview questions…"}
+      </div>
 
       {/* Stage */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1.9fr_1fr] gap-4 p-4">
@@ -255,11 +284,12 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
         )}
 
         <button
-          onClick={onEnd}
+          onClick={() => void finish()}
+          disabled={ending}
           className="shrink-0 flex items-center gap-2 bg-white text-black text-[13px] font-semibold px-5 h-11 rounded-none transition-opacity active:opacity-70"
         >
           <PhoneOff className="h-[16px] w-[16px]" strokeWidth={1.8} />
-          End session
+          {ending ? "Saving analysis…" : "End session"}
         </button>
       </footer>
 

@@ -59,7 +59,7 @@ export function ResumeUpload({ onReadyChange }: { onReadyChange?: (resume: Resum
         <span className="text-[12px] text-white/45">{resume ? `${Math.max(1, Math.round(resume.size / 1024))} KB · ${ready ? "Ready for interview prep" : "Processing not complete"}` : "PDF files up to 10 MB"}</span>
         {!busy && resume && <span className="text-[12px] text-white/40">Click to replace</span>}
       </button>
-      <p className="text-[11px] text-white/40">Your resume is uploaded to personalize your interview questions.</p>
+      <p className="text-[11px] text-white/40">Saved on this device and sent to Gemini for each interview’s questions.</p>
       {busy && <p role="status" className="sr-only">{progress}</p>}
       {error && <p role="alert" className="text-[12px] text-red-300">{error}</p>}
       {resume && !busy && <div className="flex gap-4 text-[12px]">

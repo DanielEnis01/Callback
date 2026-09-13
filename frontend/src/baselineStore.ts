@@ -57,8 +57,7 @@ export interface InterviewProfile {
  * Context collected each time a session is started: which resume to use
  * (defaults to the calibration profile's, but a person can swap in a
  * different one for a specific session), the job posting being practiced
- * for, and an optional weakness to target. All three are what Backboard's
- * RAG layer will be pointed at once it exists — this is just the frontend
+ * for, and an optional weakness to target. The fresh resume and job posting go directly to Gemini — this is the frontend
  * plumbing for that; there's no backend/document store yet, so only resume
  * metadata is kept, same as InterviewProfile.
  */
@@ -110,8 +109,8 @@ export function clearBaseline(): void {
   }
 }
 
-// Resume bytes are held by Backboard. This stores the profile context and
-// uploaded document reference; backboard.ts owns upload/readiness state.
+// Resume bytes stay in IndexedDB. This stores only the local file reference;
+// backboard.ts sends the PDF directly to Gemini when planning an interview.
 export function saveInterviewProfile(profile: InterviewProfile): void {
   try {
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
@@ -133,8 +132,7 @@ export function getInterviewProfile(): InterviewProfile | null {
 // Set on the pre-session context screen (pick a resume, paste the job
 // posting) right before a session starts. Same local-only stand-in as
 // everything else here — swap for a real per-session backend record (and
-// actual resume/job-posting text handed to Backboard's RAG layer) once
-// that exists.
+// actual resume/job-posting text handed directly to Gemini).
 export function saveSessionContext(context: SessionContext): void {
   try {
     localStorage.setItem(SESSION_CONTEXT_STORAGE_KEY, JSON.stringify(context));
