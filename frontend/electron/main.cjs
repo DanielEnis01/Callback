@@ -46,7 +46,21 @@ async function createWindow() {
   // to a real SDK instance here in the main process, over the MessagePort
   // preload.cjs's bridge sets up. Without this call, the renderer-side SDK
   // throws as soon as it's constructed.
-  bindSmartSpectraIpc(win);
+  // The SDK bridge normally writes frame-pump failures only to the terminal.
+  // Forward those diagnostics to the renderer as well so calibration can
+  // recover from a native kInvalidState instead of waiting forever while
+  // every camera frame is silently discarded.
+  bindSmartSpectraIpc(win, {
+    logger(level, message) {
+      const prefix = "[smartspectra/main]";
+      if (level === "error") console.error(prefix, message);
+      else if (level === "warn") console.warn(prefix, message);
+      else console.log(prefix, message);
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send("callback:smartspectra-diagnostic", { level, message });
+      }
+    },
+  });
 
   if (isDev) {
     win.loadURL(startUrl);

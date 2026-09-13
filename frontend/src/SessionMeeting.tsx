@@ -6,9 +6,16 @@ import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
 import { useConversation } from "./useConversation";
 import { DevPanel } from "./DevPanel";
+import { getAverageRestingVitals } from "./baselineStore";
 
 interface SessionMeetingProps {
   onEnd: () => void;
+}
+
+function deltaText(current: number | null, resting: number | null): string | null {
+  if (current == null || resting == null || !Number.isFinite(current) || !Number.isFinite(resting)) return null;
+  const delta = Math.round(current - resting);
+  return `${delta > 0 ? "+" : ""}${delta} vs avg`;
 }
 
 export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
@@ -18,6 +25,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaPipe = useMediaPipe(!camOff, videoRef);
+  const restingVitals = getAverageRestingVitals();
 
   const statsRef = useRef({
     // Sliding window of the last 60 frames (~15 seconds at 4fps)
@@ -37,7 +45,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
     }
   }, [mediaPipe]);
 
-  const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff);
+  const { stream, emotion, stress, baevsky, pulseBpm, breathingRate, status, error, validationHint } = usePresageSession(!camOff);
 
   // ── Voice conversation loop (STT → Gemini → ElevenLabs TTS) ─────────────────
   const conversation = useConversation();
@@ -55,6 +63,9 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   const clock = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
 
   const pending = status === "error" ? "Unavailable" : validationHint ?? "—";
+  const pulseDelta = deltaText(pulseBpm, restingVitals?.restingPulseBpm ?? null);
+  const breathingDelta = deltaText(breathingRate, restingVitals?.breathingRatePerMin ?? null);
+  const stressDelta = deltaText(baevsky, restingVitals?.baevsky ?? null);
 
   const recentHistory = statsRef.current.recentLookHistory;
   const eyeContactPct = recentHistory.length > 0
@@ -63,7 +74,8 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
 
   const metrics = [
     { label: "Emotion", value: emotion ?? pending },
-    { label: "Pulse", value: pulseBpm ? `${pulseBpm} bpm` : pending },
+    { label: "Pulse", value: pulseBpm != null ? `${pulseBpm} bpm${pulseDelta ? ` · ${pulseDelta}` : ""}` : pending },
+    { label: "Breathing", value: breathingRate != null ? `${breathingRate}/min${breathingDelta ? ` · ${breathingDelta}` : ""}` : pending },
     { label: "Eye Contact", value: `${eyeContactPct}%` },
     {
       label: "Posture",
@@ -73,7 +85,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
           ? `Steady (${mediaPipe.postureShiftCount})`
           : "Steady",
     },
-    { label: "Stress", value: stress ?? pending },
+    { label: "Stress", value: stress ? `${stress}${stressDelta ? ` · ${stressDelta}` : ""}` : pending },
   ];
 
   return (
@@ -203,8 +215,9 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
           <div className="flex-1 min-w-0 flex items-center gap-2">
             <div className="flex items-center gap-2 pr-3 shrink-0 text-[11px] uppercase tracking-[0.14em] text-white/40">
               <Activity className="h-3.5 w-3.5" /> Live monitoring
+              <span className="text-white/25">· vs average adult reference</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-px bg-white/12 border border-white/12 flex-1 min-w-0">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-px bg-white/12 border border-white/12 flex-1 min-w-0">
               {metrics.map((m) => (
                 <div key={m.label} className="bg-black px-3 py-1.5 flex flex-col">
                   <span className="text-[10px] uppercase tracking-[0.12em] text-white/35">{m.label}</span>

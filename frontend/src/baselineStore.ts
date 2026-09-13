@@ -1,9 +1,8 @@
 /**
- * Local, per-device stand-in for a real "save the user's calibration
- * baseline" backend call. There's no accounts/database yet, so this just
- * persists to localStorage — swap `saveBaseline`/`getBaseline` for a real
- * API call once there's a backend + per-user auth; the `Baseline` shape
- * below is what should move over unchanged.
+ * Local, per-device stand-in for a real "save the user's resting vitals"
+ * backend call. There's no accounts/database yet, so this persists the
+ * completed calibration to localStorage. The current interview path uses the
+ * population reference below instead of requiring this optional calibration.
  */
 
 import type { MediaPipeBaseline } from "./useMediaPipe";
@@ -78,20 +77,57 @@ export interface SessionContext {
 }
 
 const STORAGE_KEY = "callback.baseline.v1";
+const RESTING_VITALS_STORAGE_KEY = "callback.resting-vitals.v1";
 const PROFILE_STORAGE_KEY = "callback.interview-profile.v1";
 const SESSION_CONTEXT_STORAGE_KEY = "callback.session-context.v1";
 
-export function saveBaseline(baseline: Baseline): void {
+/**
+ * Population reference used when no personalized calibration is requested.
+ * Pulse 70 and breathing 15 are representative midpoint/reference values;
+ * RMSSD and SDNN use the all-participant means reported by the MESA healthy
+ * adult reference cohort. Baevsky stress has no single validated adult
+ * average, so it intentionally remains null.
+ *
+ * Sources:
+ * - https://www.heart.org/en/healthy-living/exercise-and-physical-activity/fitness-basics/target-heart-rates
+ * - https://www.medlineplus.gov/ency/article/002341.htm
+ * - https://pmc.ncbi.nlm.nih.gov/articles/PMC5010946/
+ */
+export const AVERAGE_RESTING_VITALS: Baseline = {
+  capturedAt: "population-reference",
+  sampleCount: 0,
+  restingPulseBpm: 70,
+  breathingRatePerMin: 15,
+  breathingAmplitude: null,
+  blinkRatePerMin: null,
+  hrv: { rmssd: 27.3, sdnn: 24.1, meanNn: 857 },
+  baevsky: null,
+  stressLabel: null,
+  edaMicroSiemens: null,
+  microMotion: { seat: null, knees: null },
+  mediaPipe: null,
+};
+
+export function getAverageRestingVitals(): Baseline {
+  return AVERAGE_RESTING_VITALS;
+}
+
+export function saveBaseline(baseline: Baseline): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(baseline));
+    // Keep a descriptive key for the interview comparison layer. The legacy
+    // baseline key remains for compatibility with the existing dashboard.
+    localStorage.setItem(RESTING_VITALS_STORAGE_KEY, JSON.stringify(baseline));
+    return true;
   } catch (err) {
     console.error("Failed to save calibration baseline:", err);
+    return false;
   }
 }
 
 export function getBaseline(): Baseline | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(RESTING_VITALS_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as Baseline) : null;
   } catch (err) {
     console.error("Failed to read calibration baseline:", err);
@@ -99,9 +135,21 @@ export function getBaseline(): Baseline | null {
   }
 }
 
+/** The completed calibration used as the resting-vitals comparison point. */
+export function getRestingVitals(): Baseline | null {
+  try {
+    const raw = localStorage.getItem(RESTING_VITALS_STORAGE_KEY) ?? localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Baseline) : null;
+  } catch (err) {
+    console.error("Failed to read resting vitals:", err);
+    return null;
+  }
+}
+
 export function clearBaseline(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(RESTING_VITALS_STORAGE_KEY);
   } catch {
     // ignore
   }

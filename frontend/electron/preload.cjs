@@ -4,3 +4,14 @@
 // Requires contextIsolation: true, which is already how this app's
 // BrowserWindow is configured.
 require("@smartspectra/node-sdk/preload");
+
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("__callbackSmartSpectraDiagnostics", {
+  onMessage(callback) {
+    if (typeof callback !== "function") return () => {};
+    const listener = (_event, diagnostic) => callback(diagnostic);
+    ipcRenderer.on("callback:smartspectra-diagnostic", listener);
+    return () => ipcRenderer.removeListener("callback:smartspectra-diagnostic", listener);
+  },
+});
