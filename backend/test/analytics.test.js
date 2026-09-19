@@ -147,7 +147,7 @@ test('session dashboard bundles at-a-glance, charts, ranked weaknesses and stren
     startedAt: '2026-09-02T10:00:00Z', endedAt: '2026-09-02T10:10:00Z',
     targetedWeakness: 'Excessive filler words', fillerWordsPerAnswer: 1, avgStarScore: 4,
   });
-  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: sessionId, recorded_at: '2026-09-02T10:00:10Z', pulse_rate: 90, stress_index_baevsky: 40 }).expect(201);
+  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: sessionId, recorded_at: '2026-09-02T10:00:10Z', pulse_rate: 90, stress_index_baevsky: 40, nervousness_score: 35 }).expect(201);
   await auth(request(app).post(`/api/data/sessions/${sessionId}/analyze`)).expect(200);
 
   const dashboard = await auth(request(app).get(`/api/analytics/sessions/${sessionId}/dashboard`)).expect(200);
@@ -156,6 +156,7 @@ test('session dashboard bundles at-a-glance, charts, ranked weaknesses and stren
   assert.ok(dashboard.body.atAGlance.compositeScore10 != null);
   assert.ok(dashboard.body.charts.some(c => c.key === 'filler_word_rate'));
   assert.ok(dashboard.body.charts.some(c => c.key === 'stress_index_baevsky'));
+  assert.ok(dashboard.body.charts.some(c => c.key === 'nervousness_score'));
   // pulse_rate at 90 vs. a baseline of 60 is a real recorded weakness from
   // computeSessionAnalysis -- not fabricated.
   assert.ok(dashboard.body.weaknesses.some(w => w.title.toLowerCase().includes('pulse')));

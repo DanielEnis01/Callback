@@ -1,4 +1,4 @@
-import { forwardRef, useEffect } from "react";
+import { forwardRef } from "react";
 import type { Ref } from "react";
 import { Camera } from "lucide-react";
 import { useCamera } from "./useCamera";
@@ -8,14 +8,6 @@ interface CameraFeedProps {
   active?: boolean;
   /** Mirror the feed, like a normal front-facing camera preview. */
   mirrored?: boolean;
-  /**
-   * Supply an already-acquired MediaStream instead of having CameraFeed
-   * open its own getUserMedia stream — used in SessionMeeting, where the
-   * Presage SmartSpectra SDK needs to own camera acquisition itself (see
-   * usePresageSession's `stream`). Omit this prop entirely (not just pass
-   * `null`) to fall back to CameraFeed's own camera, as CalibrationSession does.
-   */
-  stream?: MediaStream | null;
 }
 
 function mergeRefs<T>(...refs: Array<Ref<T> | undefined>) {
@@ -33,28 +25,12 @@ function mergeRefs<T>(...refs: Array<Ref<T> | undefined>) {
  * (`relative` + `overflow-hidden`) — see CalibrationSession / SessionMeeting.
  */
 export const CameraFeed = forwardRef<HTMLVideoElement, CameraFeedProps>(function CameraFeed(
-  { active = true, mirrored = true, stream: externalStream },
+  { active = true, mirrored = true },
   forwardedRef,
 ) {
-  const useOwnCamera = externalStream === undefined;
-  const { videoRef, ready: ownReady, error } = useCamera(useOwnCamera && active);
+  const { videoRef, ready, error } = useCamera(active);
 
-  useEffect(() => {
-    if (useOwnCamera) return;
-    const video = videoRef.current;
-    if (!video) return;
-    video.srcObject = externalStream ?? null;
-
-    if (externalStream) {
-      video.play().catch(() => {
-        // AbortError here is expected if srcObject changes again before
-        // play() settles (e.g. a fast dev-mode remount) — not worth
-        // surfacing to the user.
-      });
-    }
-  }, [externalStream, useOwnCamera, videoRef]);
-
-  if (useOwnCamera && error) {
+  if (error) {
     return (
       <div className="flex flex-col items-center gap-2 text-white/25 px-6 text-center">
         <Camera className="h-8 w-8" strokeWidth={1.4} />
@@ -63,17 +39,6 @@ export const CameraFeed = forwardRef<HTMLVideoElement, CameraFeedProps>(function
       </div>
     );
   }
-
-  if (!useOwnCamera && !externalStream) {
-    return (
-      <div className="flex flex-col items-center gap-2 text-white/25">
-        <Camera className="h-8 w-8" strokeWidth={1.4} />
-        <span className="text-[12px] uppercase tracking-[0.16em]">Starting camera…</span>
-      </div>
-    );
-  }
-
-  const ready = useOwnCamera ? ownReady : true;
 
   return (
     <>

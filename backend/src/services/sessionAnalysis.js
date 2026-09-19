@@ -13,6 +13,7 @@ import { HttpError } from '../errors.js';
 // 'lower' / 'higher': that direction is better. 'closer': smaller distance
 // from baseline is better (used for signals with no inherent good direction).
 export const SCORED_SIGNALS = {
+  nervousness_score: { better: 'lower', baselineField: null },
   stress_index_baevsky: { better: 'lower', baselineField: 'baseline_stress_index' },
   pulse_rate: { better: 'lower', baselineField: 'baseline_pulse' },
   breathing_rate: { better: 'lower', baselineField: 'baseline_breathing_rate' },
@@ -22,7 +23,7 @@ export const SCORED_SIGNALS = {
   eda_level: { better: 'lower', baselineField: 'baseline_eda' },
   rmssd: { better: 'higher', baselineField: null },
   sdnn: { better: 'higher', baselineField: null },
-  // Populated from MediaPipe, not Presage — see SessionMeeting.tsx's collect().
+  // Populated by the on-device MediaPipe pipeline in SessionMeeting.tsx.
   posture_stability_score: { better: 'higher', baselineField: null },
   gaze_away_seconds: { better: 'lower', baselineField: null },
 };
@@ -30,6 +31,7 @@ export const SCORED_SIGNALS = {
 const FLAT_THRESHOLD_PCT = 5; // deltas smaller than this read as "about the same", not better/worse
 
 const LABELS = {
+  nervousness_score: 'visible nervousness proxy',
   stress_index_baevsky: 'stress index', pulse_rate: 'pulse rate', breathing_rate: 'breathing rate',
   breathing_amplitude: 'breathing amplitude', fidget_score_seat: 'seat fidgeting', fidget_score_knee: 'knee fidgeting',
   eda_level: 'skin conductance', rmssd: 'HRV (RMSSD)', sdnn: 'HRV (SDNN)',

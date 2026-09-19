@@ -895,17 +895,6 @@ function fmt(n: number | null | undefined, digits = 0): string | null {
   return n == null || Number.isNaN(n) ? null : n.toFixed(digits);
 }
 
-// Headline vitals before calibration has ever run. Deliberately blank rather
-// than the plausible-looking numbers this used to seed ("68 bpm", "42 · Low")
-// -- an uncalibrated user was being shown vitals nobody measured, which is
-// exactly what the rest of the app refuses to do.
-const seedHeadline: { label: string; value: string; unit: string }[] = [
-  { label: "Resting pulse", value: "—", unit: "bpm" },
-  { label: "Breathing rate", value: "—", unit: "/min" },
-  { label: "Blink rate", value: "—", unit: "/min" },
-  { label: "Stress (Baevsky)", value: "—", unit: "" },
-];
-
 const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) => {
   const [baseline, setBaseline] = useState<Baseline | null>(null);
   const [loadError, setLoadError] = useState('');
@@ -919,76 +908,33 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
   }, []);
   if (!baseline) return <div className="p-8 text-white/60"><p role={loadError ? 'alert' : 'status'}>{loading ? 'Loading baseline…' : loadError || 'No saved calibration yet.'}</p><button className="mt-6 border p-3" onClick={onRecalibrate}>Calibrate</button></div>;
 
-  const headline = baseline
-    ? [
-        { label: "Resting pulse", value: fmt(baseline.restingPulseBpm) ?? "—", unit: "bpm" },
-        { label: "Breathing rate", value: fmt(baseline.breathingRatePerMin) ?? "—", unit: "/min" },
-        { label: "Blink rate", value: fmt(baseline.blinkRatePerMin) ?? "—", unit: "/min" },
-        {
-          label: "Stress (Baevsky)",
-          value: fmt(baseline.baevsky) ?? "—",
-          unit: baseline.stressLabel ? `· ${baseline.stressLabel}` : "",
-        },
-      ]
-    : seedHeadline;
+  const mp = baseline.mediaPipe;
+  const headline = [
+    { label: "Neutral yaw", value: fmt(mp?.neutralHeadYaw, 1) ?? "—", unit: "°" },
+    { label: "Neutral pitch", value: fmt(mp?.neutralHeadPitch, 1) ?? "—", unit: "°" },
+    { label: "Shoulder tilt", value: fmt(mp?.neutralShoulderTilt, 1) ?? "—", unit: "°" },
+    { label: "Resting movement", value: fmt(mp?.restingMovementRate, 2) ?? "—", unit: "shoulder-widths/s" },
+  ];
 
-  const baselineGroups: { heading: string; rows: { label: string; value: string }[] }[] = baseline
-    ? [
-        {
-          heading: "Heart rate variability",
-          rows: [
-            { label: "RMSSD", value: fmt(baseline.hrv.rmssd, 0) ? `${fmt(baseline.hrv.rmssd, 0)} ms` : "Not enough data" },
-            { label: "SDNN", value: fmt(baseline.hrv.sdnn, 0) ? `${fmt(baseline.hrv.sdnn, 0)} ms` : "Not enough data" },
-            { label: "Mean NN", value: fmt(baseline.hrv.meanNn, 0) ? `${fmt(baseline.hrv.meanNn, 0)} ms` : "Not enough data" },
-          ],
-        },
-        {
-          heading: "Breathing pattern",
-          rows: [
-            { label: "Rate", value: fmt(baseline.breathingRatePerMin) ? `${fmt(baseline.breathingRatePerMin)} /min` : "Not enough data" },
-            { label: "Amplitude", value: fmt(baseline.breathingAmplitude, 2) ?? "Not enough data" },
-          ],
-        },
-        {
-          heading: "Motion & stress",
-          rows: [
-            { label: "Seat micro-motion", value: fmt(baseline.microMotion.seat, 3) ?? "Not enough data" },
-            { label: "Knee micro-motion", value: fmt(baseline.microMotion.knees, 3) ?? "Not enough data" },
-            {
-              label: "Skin conductance (EDA)",
-              // The SDK needs 35s+ of continuous recording before it produces
-              // a first EDA sample, so a 45s calibration often only gets a
-              // couple — this is genuinely absent more often than not.
-              value: fmt(baseline.edaMicroSiemens, 2) ? `${fmt(baseline.edaMicroSiemens, 2)} µS` : "Not enough data",
-            },
-          ],
-        },
-      ]
-    : [
-        {
-          heading: "Heart rate variability",
-          rows: [
-            { label: "RMSSD", value: "48 ms" },
-            { label: "SDNN", value: "62 ms" },
-            { label: "Mean NN", value: "880 ms" },
-          ],
-        },
-        {
-          heading: "Breathing pattern",
-          rows: [
-            { label: "Rate", value: "14 /min" },
-            { label: "Amplitude", value: "Normal" },
-          ],
-        },
-        {
-          heading: "Motion & stress",
-          rows: [
-            { label: "Seat micro-motion", value: "Low" },
-            { label: "Knee micro-motion", value: "Low" },
-            { label: "Skin conductance (EDA)", value: "3.2 µS" },
-          ],
-        },
-      ];
+  const baselineGroups: { heading: string; rows: { label: string; value: string }[] }[] = [
+    {
+      heading: "Head & gaze reference",
+      rows: [
+        { label: "Neutral yaw", value: mp ? `${fmt(mp.neutralHeadYaw, 1)}°` : "Recalibration needed" },
+        { label: "Neutral pitch", value: mp ? `${fmt(mp.neutralHeadPitch, 1)}°` : "Recalibration needed" },
+        { label: "Neutral roll", value: mp ? `${fmt(mp.neutralHeadRoll, 1)}°` : "Recalibration needed" },
+      ],
+    },
+    {
+      heading: "Posture & movement reference",
+      rows: [
+        { label: "Shoulder tilt", value: mp ? `${fmt(mp.neutralShoulderTilt, 1)}°` : "Recalibration needed" },
+        { label: "Torso lean", value: mp ? `${fmt(mp.neutralTorsoLean, 1)}°` : "Recalibration needed" },
+        { label: "Camera-distance proxy", value: mp ? fmt(mp.neutralShoulderDistance, 3) ?? "—" : "Recalibration needed" },
+        { label: "Resting movement", value: mp ? `${fmt(mp.restingMovementRate, 2)} shoulder-widths/s` : "Recalibration needed" },
+      ],
+    },
+  ];
 
   const capturedLabel = baseline
     ? new Date(baseline.capturedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
@@ -1001,9 +947,7 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
         <div>
           <h1 className="text-[28px] font-800 tracking-tight" style={{ fontWeight: 800 }}>Baseline</h1>
           <p className="mt-1 text-[13px] text-white/45" style={{ fontWeight: 300 }}>
-            {baseline
-              ? `Your calm/resting values · captured ${capturedLabel}. Every session is scored as a deviation from these.`
-              : "No calibration on file yet — these are placeholder values. Run calibration to capture your own."}
+            Your local MediaPipe reference · captured {capturedLabel}. The nervousness proxy compares visible movement with this baseline.
           </p>
         </div>
         <button
@@ -1046,8 +990,8 @@ const CalibrationView: FC<{ onRecalibrate: () => void }> = ({ onRecalibrate }) =
       </div>
 
       <p className="mt-5 text-[11px] text-white/25 leading-relaxed shrink-0">
-        Baseline is stored only on this device for now (no accounts/database yet) to compare against your own
-        future sessions. Indicators are heuristic estimates for coaching, not a clinical or certified measurement.
+        The local baseline keeps vision inference independent of a network connection. Indicators are heuristic
+        estimates for coaching, not a clinical or certified measurement.
       </p>
     </div>
   );

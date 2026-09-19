@@ -131,10 +131,11 @@ test('persists and retrieves baselines, sessions, JSON metrics and computed sess
   assert.equal(baselineList.body.records[0].baseline_id, baseline.body.baseline_id);
   const session = await auth(request(app).post('/api/data/sessions')).send({ session_type: 'focus', started_at: '2026-09-12T12:00:00Z' }).expect(201);
   const id = session.body.session_id;
-  const metric = { session_id: id, pulse_rate: 72, filler_word_count: 3, overall_session_score: 8, emotion_breakdown: { happy: 0.7, neutral: 0.3 } };
+  const metric = { session_id: id, pulse_rate: 72, nervousness_score: 42, filler_word_count: 3, overall_session_score: 8, emotion_breakdown: { happy: 0.7, neutral: 0.3 } };
   await auth(request(app).post('/api/data/session-metrics')).send(metric).expect(201);
   const read = await auth(request(app).get(`/api/data/session-metrics?sessionId=${id}`)).expect(200);
   assert.equal(read.body.records[0].pulse_rate, 72);
+  assert.equal(read.body.records[0].nervousness_score, 42);
   assert.deepEqual(read.body.records[0].emotion_breakdown, metric.emotion_breakdown);
   const ended = await auth(request(app).patch(`/api/data/sessions/${id}`)).send({ ended_at: '2026-09-12T12:05:00Z' }).expect(200);
   assert.equal(ended.body.duration_seconds, 300);
@@ -147,6 +148,7 @@ test('persists and retrieves baselines, sessions, JSON metrics and computed sess
   await auth(request(app).post('/api/data/baselines')).send({ user_id: 'bob', baseline_pulse: 55 }).expect(400);
   await auth(request(app).post('/api/data/baselines')).send({ baseline_pulse: '65' }).expect(400);
   await auth(request(app).post('/api/data/session-metrics')).send({ ...metric, overall_session_score: 11 }).expect(400);
+  await auth(request(app).post('/api/data/session-metrics')).send({ ...metric, nervousness_score: 101 }).expect(400);
 });
 test('saves and reads back an interview profile, including the calibration flow that omits jobPosting entirely', async () => {
   // CalibrationSession.tsx never sends a jobPosting key at all (it's set
@@ -169,18 +171,20 @@ test('saves and reads back an interview profile, including the calibration flow 
 test('analyzes a session against baseline and recent-session trend, stores the result, and lists it', async () => {
   await auth(request(app).post('/api/data/baselines')).send({ baseline_pulse: 60, baseline_stress_index: 20 }).expect(201);
   const first = await auth(request(app).post('/api/data/sessions')).send({ session_type: 'focus', started_at: '2026-09-12T13:00:00Z' }).expect(201);
-  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: first.body.session_id, recorded_at: '2026-09-12T13:00:10Z', pulse_rate: 90, stress_index_baevsky: 40 }).expect(201);
+  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: first.body.session_id, recorded_at: '2026-09-12T13:00:10Z', pulse_rate: 90, stress_index_baevsky: 40, nervousness_score: 70 }).expect(201);
   const firstAnalysis = await auth(request(app).post(`/api/data/sessions/${first.body.session_id}/analyze`)).expect(200);
   assert.equal(firstAnalysis.body.signal_averages.pulse_rate, 90);
+  assert.equal(firstAnalysis.body.signal_averages.nervousness_score, 70);
   assert.equal(firstAnalysis.body.baseline_deltas.pulse_rate.direction, 'worse');
   assert.ok(firstAnalysis.body.weaknesses.some(w => w.signal === 'pulse_rate'));
   assert.equal(firstAnalysis.body.overall_score, 0);
 
   const second = await auth(request(app).post('/api/data/sessions')).send({ session_type: 'focus', started_at: '2026-09-12T14:00:00Z' }).expect(201);
-  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: second.body.session_id, recorded_at: '2026-09-12T14:00:10Z', pulse_rate: 50, stress_index_baevsky: 18 }).expect(201);
+  await auth(request(app).post('/api/data/session-metrics')).send({ session_id: second.body.session_id, recorded_at: '2026-09-12T14:00:10Z', pulse_rate: 50, stress_index_baevsky: 18, nervousness_score: 25 }).expect(201);
   const secondAnalysis = await auth(request(app).post(`/api/data/sessions/${second.body.session_id}/analyze`)).expect(200);
   assert.equal(secondAnalysis.body.baseline_deltas.pulse_rate.direction, 'better');
   assert.equal(secondAnalysis.body.trend.pulse_rate.direction, 'better'); // improved vs the first session's average of 90
+  assert.equal(secondAnalysis.body.trend.nervousness_score.direction, 'better');
   assert.equal(secondAnalysis.body.overall_score, 100);
 
   // Recomputing replaces the row instead of duplicating it.

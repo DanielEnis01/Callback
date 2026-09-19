@@ -5,17 +5,7 @@ import type { MediaPipeBaseline } from "./useMediaPipe";
 export interface Baseline {
   capturedAt: string;
   sampleCount: number;
-  restingPulseBpm: number | null;
-  breathingRatePerMin: number | null;
-  breathingAmplitude: number | null;
-  blinkRatePerMin: number | null;
-  hrv: { rmssd: number | null; sdnn: number | null; meanNn: number | null };
-  baevsky: number | null;
-  stressLabel: "Low" | "Moderate" | "High" | null;
-  edaMicroSiemens: number | null;
-  microMotion: { seat: number | null; knees: number | null };
-
-  /** MediaPipe calibration baselines — null if models failed to load. */
+  /** Local MediaPipe calibration baseline — null for unmigrated old records. */
   mediaPipe: MediaPipeBaseline | null;
 }
 
@@ -80,29 +70,35 @@ function write(key: string, value: unknown) {
 }
 
 export async function saveBaseline(baseline: Baseline, baselineId = crypto.randomUUID()): Promise<void> {
-  if (!remoteStorageEnabled) return write(baselineKey, baseline);
+  // Always keep the calibration next to the on-device model. Remote storage,
+  // when enabled, is a sync target rather than a runtime dependency.
+  write(baselineKey, baseline);
+  if (!remoteStorageEnabled) return;
   await dataRequest('/baselines', {
     baseline_id: baselineId, captured_at: baseline.capturedAt,
-    baseline_stress_index: baseline.baevsky, baseline_pulse: baseline.restingPulseBpm,
-    baseline_breathing_rate: baseline.breathingRatePerMin, baseline_blink_rate: baseline.blinkRatePerMin,
-    baseline_fidget_score: baseline.microMotion.seat, baseline_eda: baseline.edaMicroSiemens,
-    baseline_breathing_amplitude: baseline.breathingAmplitude, raw_data: baseline,
+    // Reuse the existing numeric baseline slot for compatibility with
+    // deployed schemas; the complete typed baseline lives in raw_data.
+    baseline_fidget_score: baseline.mediaPipe?.restingMovementRate ?? null,
+    raw_data: baseline,
   });
 }
 
 export async function getBaseline(): Promise<Baseline | null> {
-  if (!remoteStorageEnabled) return read<Baseline>(baselineKey);
+  const local = read<Baseline>(baselineKey);
+  if (local?.mediaPipe || !remoteStorageEnabled) return local;
   const result = await dataRequest<{ records: Array<Record<string, any>> }>('/baselines?limit=1');
   const row = result.records[0];
   if (!row) return null;
-  if (row.raw_data?.capturedAt && row.raw_data?.hrv && row.raw_data?.microMotion) return row.raw_data as Baseline;
+  if (row.raw_data?.capturedAt) {
+    return {
+      capturedAt: row.raw_data.capturedAt,
+      sampleCount: Number(row.raw_data.sampleCount) || 0,
+      mediaPipe: row.raw_data.mediaPipe ?? null,
+    };
+  }
   return {
-    capturedAt: row.captured_at, sampleCount: 0, restingPulseBpm: row.baseline_pulse,
-    breathingRatePerMin: row.baseline_breathing_rate, breathingAmplitude: row.baseline_breathing_amplitude,
-    blinkRatePerMin: row.baseline_blink_rate, baevsky: row.baseline_stress_index,
-    stressLabel: row.baseline_stress_index == null ? null : row.baseline_stress_index < 100 ? 'Low' : row.baseline_stress_index < 300 ? 'Moderate' : 'High',
-    hrv: { rmssd: null, sdnn: null, meanNn: null }, edaMicroSiemens: row.baseline_eda,
-    microMotion: { seat: row.baseline_fidget_score, knees: null },
+    capturedAt: row.captured_at,
+    sampleCount: 0,
     mediaPipe: null,
   };
 }

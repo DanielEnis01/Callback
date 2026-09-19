@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS session_metrics (
   topic_relevance_score DOUBLE PRECISION,
   gaze_away_seconds DOUBLE PRECISION,
   posture_stability_score DOUBLE PRECISION,
+  nervousness_score DOUBLE PRECISION CHECK (nervousness_score BETWEEN 0 AND 100),
   dominant_emotion TEXT,
   emotion_breakdown JSONB CHECK (jsonb_typeof(emotion_breakdown) = 'object'),
   stress_index_baevsky DOUBLE PRECISION,
@@ -173,6 +174,8 @@ CREATE TABLE IF NOT EXISTS session_metrics (
   PRIMARY KEY (session_id, recorded_at),
   FOREIGN KEY (session_id, user_id) REFERENCES sessions(session_id, user_id) ON DELETE CASCADE
 );
+ALTER TABLE session_metrics ADD COLUMN IF NOT EXISTS nervousness_score DOUBLE PRECISION
+  CHECK (nervousness_score BETWEEN 0 AND 100);
 CREATE INDEX IF NOT EXISTS idx_metrics_user_recorded ON session_metrics(user_id, recorded_at DESC);
 
 -- Per-session analysis, computed once (on demand, replaceable) from that

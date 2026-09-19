@@ -2,14 +2,14 @@ import { useEffect, useState, useRef, FC } from "react";
 import { Video, VideoOff, PhoneOff, Activity, RotateCcw } from "lucide-react";
 import { VoiceOrb } from "./VoiceOrb";
 import { CameraFeed } from "./CameraFeed";
-import { usePresageSession } from "./usePresageSession";
 import { useMediaPipe } from "./useMediaPipe";
+import { useNervousnessProxy } from "./nervousnessProxy";
 import { useConversation } from "./useConversation";
 import { DevPanel } from "./DevPanel";
 
 import { dataRequest, analyzeSessionTranscript } from "./dataApi";
 import { SessionRecorder, type MetricValues } from "./sessionRecorder";
-import { remoteStorageEnabled, getSessionContext } from "./baselineStore";
+import { remoteStorageEnabled, getBaseline, getSessionContext, type Baseline } from "./baselineStore";
 import { staticDataRequest } from "./staticSessionStore";
 import { liveMonitorKeysForTarget, type LiveMetricKey } from "./liveTraitMonitors";
 
@@ -121,7 +121,16 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   }
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const mediaPipe = useMediaPipe(!camOff, videoRef);
+  const mediaPipe = useMediaPipe(!camOff && !ending, videoRef);
+  const [baseline, setBaseline] = useState<Baseline | null>(null);
+  useEffect(() => {
+    let current = true;
+    void getBaseline()
+      .then((value) => { if (current) setBaseline(value); })
+      .catch((error) => console.warn("Local MediaPipe baseline unavailable:", error));
+    return () => { current = false; };
+  }, []);
+  const nervousness = useNervousnessProxy(mediaPipe, baseline?.mediaPipe);
 
   const statsRef = useRef({
     // Sliding window of the last 60 frames (~15 seconds at 4fps)
@@ -132,15 +141,7 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
   // useMediaPipe itself (see POSTURE_*/FIDGET_* constants there), so this
   // effect only has to track the eye-contact rolling window.
   //
-  // This is also what feeds gaze_away_seconds into the per-second recorder
-  // window (same `collect` Presage's metrics go through) -- previously
-  // MediaPipe's gaze signal stayed UI-only and nothing about eye contact
-  // was ever saved, so Results/Dashboard's "Eye contact" trait had no real
-  // history to draw on. Recording a plain 0/1 per MediaPipe update (looking
-  // vs. not, latest-value-wins within each 1s window, same fidelity as
-  // every other per-second metric here) means the session average of this
-  // column is a real fraction of time spent looking away -- not fabricated,
-  // just finally persisted.
+  // Persist MediaPipe's eye-contact and posture signals in one-second windows.
   useEffect(() => {
     if (mediaPipe.status !== "ready") return;
 
@@ -163,37 +164,22 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
       const stability = 10 - Math.min(10, (mediaPipe.poseMovementRate / 1.5) * 10);
       collect({ posture_stability_score: Math.max(0, stability) });
     }
-  }, [mediaPipe]);
+  }, [mediaPipe.status, mediaPipe.lookingAtCamera, mediaPipe.poseMovementRate]);
 
-  // Real perception signal from the Presage SmartSpectra SDK — it owns
-  // camera acquisition itself (see the `stream` handed to CameraFeed
-  // below), analyzing the live feed for expression + HRV-based stress.
-  // Fillers/pace still need a speech pipeline that isn't wired up yet, so
-  // those show as pending rather than invented numbers. `collect` feeds
-  // Presage's per-sample metrics into the Tiger Data window recorder above;
-  // MediaPipe's own signals (eye contact/posture) stay UI-only for now.
-  const { stream, emotion, stress, pulseBpm, status, error, validationHint } = usePresageSession(!camOff && !ending, collect);
+  // The nervousness proxy is derived entirely from the same local MediaPipe
+  // stream. It is a visible-behavior coaching signal, not a stress diagnosis.
+  useEffect(() => {
+    if (nervousness.status === "ready" && nervousness.score != null) {
+      collect({ nervousness_score: nervousness.score });
+    }
+  }, [nervousness]);
 
   useEffect(() => {
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    if (error) console.error("Presage session error:", error);
-  }, [error]);
-
   const clock = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
-
-  const pending = status === "error" ? "Unavailable" : validationHint ?? "—";
-  // Stress/Baevsky specifically can never resolve, not just "not yet": the
-  // HRV metric it depends on is deliberately excluded from requestedMetrics
-  // in usePresageSession.ts (requesting it wedges the native SDK in this
-  // environment -- see that file's comment). Reusing `pending` here would
-  // show the validation hint forever, which reads as a stuck/broken tile
-  // rather than an honest "this signal isn't available" -- so it gets its
-  // own, permanent label instead of `pending`.
-  const stressDisplay = status === "error" ? "Unavailable" : stress ?? "Not tracked";
 
   const recentHistory = statsRef.current.recentLookHistory;
   const eyeContactPct = recentHistory.length > 0
@@ -210,22 +196,25 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
     : mediaPipe.postureShiftCount > 0
       ? `Steady (${mediaPipe.postureShiftCount})`
       : "Steady";
+  const nervousnessValue = nervousness.status === "ready" && nervousness.score != null
+    ? `${nervousness.score} / 100 · ${nervousness.level}`
+    : nervousness.status === "unavailable"
+      ? "Unavailable"
+      : "Calibrating…";
 
   // Every live signal we can actually show, keyed by tile label.
   const ALL_METRICS: Record<LiveMetricKey, { label: string; value: string }> = {
-    Emotion: { label: "Emotion", value: emotion ?? pending },
-    Pulse: { label: "Pulse", value: pulseBpm ? `${pulseBpm} bpm` : pending },
     "Eye Contact": { label: "Eye Contact", value: eyeContactValue },
     Posture: { label: "Posture", value: postureValue },
-    Stress: { label: "Stress", value: stressDisplay },
+    Nervousness: { label: "Nervousness proxy", value: nervousnessValue },
   };
 
   // Which live tiles actually speak to a given trait. Only the traits below
   // have a real-time signal behind them -- the verbal ones (Answer Structure,
   // Specificity, Outcome Focus...) are scored from the transcript after the
-  // fact, so there is nothing honest to display live for them. Showing a
-  // pulse readout while someone practises Answer Structure is noise wearing
-  // the costume of feedback.
+  // fact, so there is nothing honest to display live for them. Showing an
+  // unrelated camera score while someone practises Answer Structure would
+  // distract from the actual target.
   const practiceTarget = getSessionContext()?.targetWeakness ?? null;
   const trackedTiles = liveMonitorKeysForTarget(practiceTarget);
   // A generic session shows NO live tiles. Every signal is still captured and
@@ -286,15 +275,15 @@ export const SessionMeeting: FC<SessionMeetingProps> = ({ onEnd }) => {
               </div>
               <span className="text-[13px]">Camera off</span>
             </div>
-          ) : stream ? (
-            <CameraFeed ref={videoRef} stream={stream} />
           ) : (
-            <div className="flex flex-col items-center gap-2 text-white/25 px-6 text-center">
-              <span className="text-[12px] uppercase tracking-[0.16em]">
-                {status === "error" ? "Presage session failed" : `Presage: ${status}`}
-              </span>
-              {error && <span className="text-[11px] normal-case text-white/35 max-w-sm">{error}</span>}
-            </div>
+            <>
+              <CameraFeed ref={videoRef} active={!ending} />
+              {mediaPipe.status === "error" && (
+                <div className="absolute inset-x-4 top-12 bg-black/75 p-3 text-center text-[11px] text-red-300">
+                  Local MediaPipe tracking failed: {mediaPipe.error}
+                </div>
+              )}
+            </>
           )}
           <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">You</span>
           {!camOff && (

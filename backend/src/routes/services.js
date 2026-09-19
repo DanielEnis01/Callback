@@ -19,7 +19,7 @@ router.use(express.json({ limit: '256kb' }));
 
 // Placeholder status endpoints — one per integration, wired up as each
 // service module gets implemented.
-const SERVICES = ['gemini', 'elevenlabs', 'presage', 'tigerdata', 'backboard'];
+const SERVICES = ['gemini', 'elevenlabs', 'tigerdata', 'backboard'];
 
 router.get('/', (_req, res) => {
   res.json({

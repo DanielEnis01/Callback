@@ -61,29 +61,3 @@ export class SessionRecorder {
     await this.write(`/sessions/${this.id}`, { ended_at: this.endedAt }, 'PATCH');
   }
 }
-
-const names: Record<number, string> = { 1: 'angry', 2: 'contempt', 3: 'disgust', 4: 'fear', 5: 'happy', 6: 'neutral', 7: 'sad', 8: 'surprise' };
-const last = (items: any) => Array.isArray(items) ? items.at(-1) : undefined;
-/** Map only fields actually present in a decoded SDK message. No fabricated zeros. */
-export function presageMetrics(message: any): MetricValues {
-  const out: MetricValues = {};
-  const number = (key: string, value: unknown) => { if (typeof value === 'number' && Number.isFinite(value)) out[key] = value; };
-  const hrv = last(message?.cardio?.hrv);
-  number('stress_index_baevsky', hrv?.baevsky);
-  number('rmssd', hrv?.rmssd); number('sdnn', hrv?.sdnn); number('mean_nn', hrv?.meanNn);
-  number('pulse_rate', last(message?.cardio?.pulseRate)?.value);
-  number('breathing_rate', last(message?.breathing?.rate)?.value);
-  number('breathing_amplitude', last(message?.breathing?.amplitude)?.value);
-  number('eda_level', last(message?.eda?.trace)?.value);
-  number('fidget_score_seat', last(message?.micromotion?.glutes)?.value);
-  number('fidget_score_knee', last(message?.micromotion?.knees)?.value);
-  const scores: Record<string, number> = {};
-  for (const score of last(message?.face?.expression)?.scores || []) {
-    if (names[score.type] && typeof score.confidence === 'number' && Number.isFinite(score.confidence)) scores[names[score.type]] = score.confidence;
-  }
-  if (Object.keys(scores).length) {
-    out.emotion_breakdown = scores;
-    out.dominant_emotion = Object.keys(scores).reduce((a, b) => scores[a] > scores[b] ? a : b);
-  }
-  return out;
-}

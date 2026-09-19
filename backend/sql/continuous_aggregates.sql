@@ -21,6 +21,7 @@ SELECT
   time_bucket('1 day', recorded_at) AS day,
   avg(filler_word_rate) AS filler_word_rate,
   avg(gaze_away_seconds) AS gaze_away_seconds,
+  avg(nervousness_score) AS nervousness_score,
   avg(stress_index_baevsky) AS stress_index_baevsky,
   avg(pulse_rate) AS pulse_rate,
   avg(breathing_rate) AS breathing_rate,

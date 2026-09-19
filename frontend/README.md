@@ -8,28 +8,26 @@ preview" placeholders in Calibration and the interview session now show
 a real live feed from `getUserMedia` via `CameraFeed` / `useCamera`.
 
 Calibration baselines, original resume PDFs, interview-profile context, and
-measured Presage readings are saved through the authenticated Tiger Data API.
+measured session readings can be saved through the authenticated Tiger Data API.
 Each session is created before samples are written; sample writes carry stable
 IDs and timestamps, so a retry after a connection loss does not duplicate data.
-Only values actually delivered by Presage are stored. Speech, gaze, and posture
-fields stay absent until their respective pipelines produce real measurements.
+The gaze, posture, and nervousness-proxy signals come from MediaPipe models
+bundled with the app and run entirely on the user's machine. No camera frames
+are sent to a vision API.
 
 The current build opens directly to the dashboard. Firebase sign-in components
 remain in `src/` but are intentionally not mounted until account setup resumes.
 
 ## Run in the browser (no camera-permission dance, quick iteration)
 
-First, create a local environment file and add a SmartSpectra API key and the
-Firebase web configuration:
+First, create a local environment file:
 
 ```
 cp .env.example .env
 ```
 
-Set `VITE_SMARTSPECTRA_API_KEY` in `.env`. Both calibration and the live
-interview monitor read this variable at runtime; no API keys are hardcoded in
-the source. `.env` is intentionally ignored by Git, while `.env.example` is
-safe to commit as the setup template.
+No key is needed for vision inference. `.env` is intentionally ignored by Git,
+while `.env.example` is safe to commit as the setup template.
 
 Then run:
 
@@ -71,10 +69,10 @@ left panel.
 - `src/CalibrationSession.tsx`, `src/SessionMeeting.tsx` — the two
   screens with a camera panel
 - `src/CameraFeed.tsx`, `src/useCamera.ts` — the live webcam feed
+- `src/useMediaPipe.ts` — bundled local face/pose inference
+- `src/nervousnessProxy.ts` — local 0–100 visible-behavior coaching proxy
 - `electron/main.cjs` — Electron main process; grants the camera
   permission request and opens the window (dev: loads the Vite server,
   prod: loads `dist/`)
-- `electron/preload.cjs` — empty for now; session-tracking IPC goes
-  here later
 - `src/sessionRecorder.ts` — retry-safe session/sample persistence
 - `src/dataApi.ts` — Firebase-token-authenticated Tiger Data requests

@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS session_metrics (
     gaze_away_seconds DOUBLE PRECISION DEFAULT 0.0,
     posture_stability_score DOUBLE PRECISION,
 
-    -- Presage
+    -- Legacy camera-vitals provider fields
     dominant_emotion TEXT,
     emotion_breakdown JSONB,
     stress_index_baevsky DOUBLE PRECISION,
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS session_metrics (
     breathing_rate DOUBLE PRECISION,
     blink_rate DOUBLE PRECISION,
 
-    -- Proposed Presage
+    -- Additional legacy camera-vitals fields
     apnea_event_count INTEGER DEFAULT 0,
     fidget_score_seat DOUBLE PRECISION,
     fidget_score_knee DOUBLE PRECISION,

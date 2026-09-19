@@ -14,6 +14,8 @@ export interface MediaPipeData {
   lookingAtCamera: boolean;
   /** Epoch ms when lookingAtCamera first went false, null if currently looking. */
   lookingAwaySince: number | null;
+  /** Normalized face bounds from the locally running Face Landmarker. */
+  faceBox: MediaPipeFaceBox | null;
 
   // Pose — derived from PoseLandmarker's normalized + world landmarks
   shoulderTiltDeg: number | null;   // shoulder line vs horizontal
@@ -51,6 +53,13 @@ export interface MediaPipeData {
 
   status: "loading" | "ready" | "error";
   error: string | null;
+}
+
+export interface MediaPipeFaceBox {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 }
 
 /** Raw snapshot captured during calibration for baseline averaging. */
@@ -239,7 +248,7 @@ function landmarkDist(a: LandmarkXYZ, b: LandmarkXYZ): number {
 
 const DEFAULT: MediaPipeData = {
   headYaw: null, headPitch: null, headRoll: null,
-  lookingAtCamera: true, lookingAwaySince: null,
+  lookingAtCamera: true, lookingAwaySince: null, faceBox: null,
   shoulderTiltDeg: null, torsoLeanDeg: null, shoulderDistance: null,
   midShoulderX: null, midShoulderY: null,
   poseMovementRate: null, isFidgeting: false, fidgetingSince: null,
@@ -276,11 +285,11 @@ export function buildMediaPipeBaseline(samples: MediaPipeSample[]): MediaPipeBas
 // ── Hook ─────────────────────────────────────────────────────────────
 
 /**
- * Runs MediaPipe Face Landmarker and Pose Landmarker on the Presage
- * camera stream. Shares the same MediaStream — does NOT call getUserMedia.
+ * Runs MediaPipe Face Landmarker and Pose Landmarker directly against the
+ * supplied video element. The model assets and WASM runtime are bundled in
+ * `public/`, so inference stays on this device and makes no API calls.
  *
  * @param active  Mount/unmount the pipeline (tie to session lifecycle).
- * @param stream  The MediaStream from Presage's `streamAvailable` event.
  * @param collectSamples  When true, pushes every reading into samplesRef
  *                        (used during calibration recording).
  */
@@ -316,8 +325,6 @@ export function useMediaPipe(
     // render interval so React only re-renders at a sane rate.
     const latest: MediaPipeData = { ...DEFAULT };
     let lookingAwayStart: number | null = null;
-    const video = videoRef.current;
-
     // Ring buffer for fidget/movement-rate detection (torso landmarks only).
     const movementBuf: number[] = [];
 
@@ -394,6 +401,15 @@ export function useMediaPipe(
               const fr = faceLandmarker.detectForVideo(video, timestamp);
               if (fr.facialTransformationMatrixes?.length) {
                 lastValidFaceTs = now;
+                const landmarks = fr.faceLandmarks?.[0] as LandmarkXYZ[] | undefined;
+                if (landmarks?.length) {
+                  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                  for (const point of landmarks) {
+                    minX = Math.min(minX, point.x); maxX = Math.max(maxX, point.x);
+                    minY = Math.min(minY, point.y); maxY = Math.max(maxY, point.y);
+                  }
+                  latest.faceBox = { minX, maxX, minY, maxY };
+                }
                 const mat = fr.facialTransformationMatrixes[0].data;
                 const { yaw, pitch, roll } = eulerFromMatrix(mat);
                 latest.headYaw = yaw;
@@ -410,6 +426,10 @@ export function useMediaPipe(
                 }
               } else {
                  lastValidFaceTs = 0;
+                 latest.faceBox = null;
+                 latest.headYaw = null;
+                 latest.headPitch = null;
+                 latest.headRoll = null;
                  latest.lookingAtCamera = false;
                  if (lookingAwayStart == null) lookingAwayStart = Date.now();
                  latest.lookingAwaySince = lookingAwayStart;
@@ -554,7 +574,14 @@ export function useMediaPipe(
                 latest.postureShiftDetected = lastShiftAt > 0 && now - lastShiftAt < POSTURE_SHIFT_COOLDOWN_MS;
               } else {
                  lastValidPoseTs = 0;
-                 // console.log("[MediaPipe] No pose detected in this frame");
+                 latest.shoulderTiltDeg = null;
+                 latest.torsoLeanDeg = null;
+                 latest.shoulderDistance = null;
+                 latest.midShoulderX = null;
+                 latest.midShoulderY = null;
+                 latest.poseMovementRate = null;
+                 latest.isFidgeting = false;
+                 latest.fidgetingSince = null;
               }
             } catch (err) {
               console.warn("[MediaPipe] Pose detect error:", err);

@@ -1,13 +1,6 @@
 /**
- * Filler text for the calibration reading passage — content doesn't matter
- * for the measurement, it just needs to be a longer list of natural things
- * to read aloud continuously for ~40s. Pulled from DummyJSON's free,
- * keyless quotes endpoint (https://dummyjson.com/quotes) for variety each
- * time; falls back to a bundled set of public-domain proverbs if the fetch
- * fails or there's no network (e.g. offline demo), so calibration never
- * blocks on it. Returned as a list (one entry per quote) rather than one
- * giant string so the UI can render — and let people scroll through —
- * distinct items instead of a single wall of text.
+ * Bundled calibration reading passage. Keeping this local guarantees the
+ * MediaPipe baseline flow never makes a network request.
  */
 
 const FALLBACK_QUOTES = [
@@ -45,25 +38,6 @@ const FALLBACK_QUOTES = [
 
 function fallbackQuotes(): string[] {
   return FALLBACK_QUOTES;
-}
-
-export async function fetchReadingText(): Promise<string[]> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch("https://dummyjson.com/quotes?limit=40", { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!res.ok) throw new Error(`dummyjson responded ${res.status}`);
-    const data = await res.json();
-    const quotes: Array<{ quote?: string; author?: string }> = data?.quotes ?? [];
-    const list = quotes
-      .filter((q) => q.quote)
-      .map((q) => `${q.quote}${q.author ? ` — ${q.author}` : ""}`);
-    return list.length ? list : fallbackQuotes();
-  } catch (err) {
-    console.warn("Falling back to bundled reading text (quote fetch failed):", err);
-    return fallbackQuotes();
-  }
 }
 
 export { fallbackQuotes };

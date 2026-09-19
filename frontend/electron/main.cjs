@@ -1,19 +1,13 @@
 const { app, BrowserWindow, session, systemPreferences } = require("electron");
-const { bindSmartSpectraIpc } = require("@smartspectra/node-sdk/main");
 const path = require("node:path");
 
 const isDev = !app.isPackaged;
 const startUrl = process.env.ELECTRON_START_URL || "http://localhost:5173";
 
 async function createWindow() {
-  // SmartSpectra's native capture (used by usePresageSession) reads the
-  // camera directly, outside Chromium's normal getUserMedia/permission
-  // flow — it needs this explicit macOS TCC grant or it silently gets no
-  // frames. Ported from TestCamera/main.js, where this same call is what
-  // makes the SDK actually receive video.
   if (process.platform === "darwin") {
-    // Ask for both camera and microphone -- camera for SmartSpectra/preview,
-    // microphone for the voice conversation loop (useConversation.ts).
+    // Camera feeds the local MediaPipe models; microphone feeds the local
+    // conversation pipeline.
     const [cameraGranted, micGranted] = await Promise.all([
       systemPreferences.askForMediaAccess("camera"),
       systemPreferences.askForMediaAccess("microphone"),
@@ -28,25 +22,11 @@ async function createWindow() {
     backgroundColor: "#000000",
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      // Electron sandboxes preload scripts by default, which blocks plain
-      // require() of a third-party npm package (only a small allowlist of
-      // built-ins works sandboxed) — that's why preload.cjs's
-      // require("@smartspectra/node-sdk/preload") was silently failing to
-      // attach window.__smartspectraBridge. contextIsolation stays on, so
-      // the renderer's web content is still isolated from Node/Electron —
-      // this only widens what our own trusted preload script can do.
-      sandbox: false,
+      sandbox: true,
     },
   });
-
-  // Wires the renderer's `new SmartSpectraSDK(...)` (src/usePresageSession.ts)
-  // to a real SDK instance here in the main process, over the MessagePort
-  // preload.cjs's bridge sets up. Without this call, the renderer-side SDK
-  // throws as soon as it's constructed.
-  bindSmartSpectraIpc(win);
 
   // Firebase's signInWithPopup (Google sign-in) calls window.open() under
   // the hood. Electron denies every window.open() by default unless a
@@ -83,9 +63,7 @@ async function createWindow() {
 app.whenReady().then(() => {
   // getUserMedia() requests from the renderer land here first — without an
   // explicit allow, Electron silently denies them before macOS even shows
-  // its camera permission prompt. (SmartSpectra's own camera acquisition
-  // is covered by askForMediaAccess above, not this — this is for
-  // CalibrationSession's plain getUserMedia camera.)
+  // its camera permission prompt.
   // Allow media (camera), microphone, and speech recognition. The mic is
   // used both by getUserMedia (VAD/recording in useConversation.ts) and by
   // Chromium's internal speech-recognition permission surface -- both need

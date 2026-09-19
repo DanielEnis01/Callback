@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState, FC } from "react";
 import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, UploadCloud, Eye } from "lucide-react";
 import { CameraFeed } from "./CameraFeed";
-import { useCalibrationSession, type CalibrationSample } from "./useCalibrationSession";
 import { remoteStorageEnabled, saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
 import { uploadResume } from "./dataApi";
-import { fetchReadingText, fallbackQuotes } from "./readingText";
-import { useMediaPipe, buildMediaPipeBaseline } from "./useMediaPipe";
+import { fallbackQuotes } from "./readingText";
+import { useMediaPipe, buildMediaPipeBaseline, type MediaPipeSample } from "./useMediaPipe";
 
 interface CalibrationSessionProps {
   onDone: () => void;
@@ -33,50 +32,15 @@ const HOLD_STEADY_MS = 2500;
 // instead of quietly averaging in garbage samples.
 const FACE_LOST_GRACE_MS = 1200;
 const BRIGHTNESS_SAMPLE_MS = 300;
-// 0-255 luma range we'll accept. Below this reads as "too dark to trust a
-// pulse signal off the skin"; above reads as blown-out/overexposed.
+// 0-255 luma range accepted by the local face and pose models.
 const MIN_BRIGHTNESS = 55;
 const MAX_BRIGHTNESS = 235;
 
-function mean(values: number[]): number | null {
-  if (!values.length) return null;
-  return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-function stressLabelFor(baevsky: number): "Low" | "Moderate" | "High" {
-  if (baevsky < 100) return "Low";
-  if (baevsky < 300) return "Moderate";
-  return "High";
-}
-
-function buildBaseline(samples: CalibrationSample[], recordedMs: number): Baseline {
-  const pulses = samples.map((s) => s.pulse).filter((v): v is number => v != null);
-  const breathRates = samples.map((s) => s.breathingRate).filter((v): v is number => v != null);
-  const breathAmps = samples.map((s) => s.breathingAmplitude).filter((v): v is number => v != null);
-  const rmssd = samples.map((s) => s.hrvRmssd).filter((v): v is number => v != null);
-  const sdnn = samples.map((s) => s.hrvSdnn).filter((v): v is number => v != null);
-  const meanNn = samples.map((s) => s.hrvMeanNn).filter((v): v is number => v != null);
-  const baevskyVals = samples.map((s) => s.baevsky).filter((v): v is number => v != null);
-  const eda = samples.map((s) => s.eda).filter((v): v is number => v != null);
-  const seat = samples.map((s) => s.micromotionSeat).filter((v): v is number => v != null);
-  const knees = samples.map((s) => s.micromotionKnees).filter((v): v is number => v != null);
-  const blinkCount = samples.filter((s) => s.blinkDetected).length;
-  const minutes = Math.max(recordedMs / 60000, 1 / 60);
-  const avgBaevsky = mean(baevskyVals);
-
+function buildBaseline(samples: MediaPipeSample[]): Baseline {
   return {
     capturedAt: new Date().toISOString(),
     sampleCount: samples.length,
-    restingPulseBpm: pulses.length ? Math.round(mean(pulses)!) : null,
-    breathingRatePerMin: breathRates.length ? Math.round(mean(breathRates)!) : null,
-    breathingAmplitude: mean(breathAmps),
-    blinkRatePerMin: Math.round(blinkCount / minutes),
-    hrv: { rmssd: mean(rmssd), sdnn: mean(sdnn), meanNn: mean(meanNn) },
-    baevsky: avgBaevsky,
-    stressLabel: avgBaevsky != null ? stressLabelFor(avgBaevsky) : null,
-    edaMicroSiemens: mean(eda),
-    microMotion: { seat: mean(seat), knees: mean(knees) },
-    mediaPipe: null, // filled in by CalibrationSession after buildMediaPipeBaseline
+    mediaPipe: buildMediaPipeBaseline(samples),
   };
 }
 
@@ -98,11 +62,12 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   const [readingInstructionsOpen, setReadingInstructionsOpen] = useState(false);
   const [gazeCalibrationOpen, setGazeCalibrationOpen] = useState(false);
   const [gazeCalibrationDone, setGazeCalibrationDone] = useState(false);
+  const faceLostSinceRef = useRef<number | null>(null);
+  const [facePausedForTooLong, setFacePausedForTooLong] = useState(false);
   const resumeInputRef = useRef<HTMLInputElement>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [videoSize, setVideoSize] = useState({ width: 0, height: 0 });
 
   const selectResume = (file: File | undefined) => {
     if (!file) return;
@@ -123,41 +88,14 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
     : null;
   const profileReady = name.trim().length > 0 && targetRoles.trim().length > 0 && !!resumeFile;
 
-  // Reading passage — a list of generic filler quotes, fetched fresh each
-  // time with a bundled offline fallback (see readingText.ts) so
-  // calibration never blocks on network. It remains a native scroll area,
-  // letting the person control their own reading pace throughout the scan.
-  const [quotes, setQuotes] = useState<string[]>(fallbackQuotes());
-  useEffect(() => {
-    let cancelled = false;
-    fetchReadingText().then((list) => {
-      if (!cancelled) setQuotes(list);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Bundled prompts keep calibration fully offline.
+  const quotes = fallbackQuotes();
 
   const cameraActive = phase === "checking" || phase === "recording";
-  // Do not collect baseline samples or advance the clock while the reading
-  // instructions or gaze calibration are in front of the passage.
-  const recording = phase === "recording" && !readingInstructionsOpen && !gazeCalibrationOpen;
-  const { stream, status, error, faceBox, samplesRef } = useCalibrationSession(cameraActive, recording, videoSize);
-
-  // MediaPipe runs alongside Presage, tracking neutral head orientation
-  // and resting posture to build the MediaPipeBaseline.
-  const mediaPipe = useMediaPipe(cameraActive, videoRef, recording);
+  // Keep the local models warm throughout the camera flow. Samples gathered
+  // before the readiness hold are cleared when the posture baseline starts.
+  const mediaPipe = useMediaPipe(cameraActive, videoRef, cameraActive);
   const mediaPipeSamplesRef = mediaPipe.samplesRef;
-
-  // Track the live video's intrinsic size so landmark coordinates can be
-  // de-normalized if they ever arrive as pixels instead of 0..1.
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const onMeta = () => setVideoSize({ width: video.videoWidth, height: video.videoHeight });
-    video.addEventListener("loadedmetadata", onMeta);
-    return () => video.removeEventListener("loadedmetadata", onMeta);
-  }, [stream]);
 
   // Lighting check: sample the live frame onto a tiny offscreen canvas and
   // read back average luma. Cheap enough to run a few times a second.
@@ -188,19 +126,22 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
     return () => clearInterval(t);
   }, [cameraActive]);
 
+  const faceBox = mediaPipe.faceBox;
   const faceOk = !!faceBox;
   const lightingOk = brightness != null && brightness >= MIN_BRIGHTNESS && brightness <= MAX_BRIGHTNESS;
-  // "Chest in frame" isn't something the SDK reports directly, so this
-  // approximates it from the face box: as long as the chin sits comfortably
-  // above the bottom of the frame (with the face not filling the whole
-  // picture), there should be room for shoulders/chest below it. Ask the
-  // person to sit back a bit if this keeps failing.
+  // Require MediaPipe's shoulder midpoint as well as a sensibly sized face;
+  // this directly verifies that the upper torso needed for posture tracking
+  // is visible instead of guessing from face size alone.
   const framedOk =
     faceOk &&
     faceBox!.minY > 0.03 &&
-    faceBox!.maxY < 0.6 &&
+    faceBox!.maxY < 0.65 &&
     faceBox!.maxY - faceBox!.minY < 0.6 &&
-    faceBox!.maxY - faceBox!.minY > 0.1;
+    faceBox!.maxY - faceBox!.minY > 0.1 &&
+    mediaPipe.midShoulderX != null &&
+    mediaPipe.midShoulderY != null &&
+    mediaPipe.midShoulderY > faceBox!.maxY &&
+    mediaPipe.midShoulderY < 0.92;
 
   const allReady = faceOk && lightingOk && framedOk;
 
@@ -218,16 +159,15 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   useEffect(() => {
     if (phase === "checking" && holdMs >= HOLD_STEADY_MS) {
+      mediaPipeSamplesRef.current = [];
       setGazeCalibrationOpen(true);
       setPhase("recording");
     }
-  }, [phase, holdMs]);
+  }, [phase, holdMs, mediaPipeSamplesRef]);
 
   // Recording clock — pauses (doesn't advance, doesn't reset) while the
   // face has been missing for longer than the grace period, so a brief
   // look-away doesn't quietly poison the average with empty samples.
-  const faceLostSinceRef = useRef<number | null>(null);
-  const [facePausedForTooLong, setFacePausedForTooLong] = useState(false);
   useEffect(() => {
     if (phase !== "recording") return;
     if (faceOk) {
@@ -248,22 +188,19 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
   useEffect(() => {
     if (phase === "recording" && elapsed >= RECORDING_SECONDS) {
-      const baseline = buildBaseline(samplesRef.current, RECORDING_SECONDS * 1000);
-      // Attach MediaPipe baselines (neutral head angles, shoulder tilt, etc.)
-      // before handing off to the (possibly remote) persistence layer.
-      baseline.mediaPipe = buildMediaPipeBaseline(mediaPipeSamplesRef.current);
+      const baseline = buildBaseline(mediaPipeSamplesRef.current);
       pendingBaseline.current = { baseline, id: crypto.randomUUID() };
       void persistBaseline();
       setPhase("done");
     }
-  }, [phase, elapsed, samplesRef, mediaPipeSamplesRef]);
+  }, [phase, elapsed, mediaPipeSamplesRef]);
 
   async function persistBaseline() {
     if (!pendingBaseline.current || saving) return;
     setSaving(true); setSaveError('');
     try {
       const { baseline, id } = pendingBaseline.current;
-      if (!baseline.sampleCount) throw new Error('No calibration readings were captured. Please recalibrate.');
+      if (!baseline.sampleCount || !baseline.mediaPipe) throw new Error('No usable MediaPipe calibration readings were captured. Please recalibrate.');
       await saveBaseline(baseline, id);
       setSavedBaseline(true);
     } catch (error) { setSaveError((error as Error).message); }
@@ -432,10 +369,9 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               Let's find your baseline.
             </h1>
             <p className="text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
-              This is calibration — you'll read a few simple phrases out loud while we measure your resting
-              pulse, breathing, and stress level. There's no right answer, nothing to perform; we just need a
-              calm reading of you specifically so future sessions can be scored against your own baseline
-              instead of a generic average.
+              This is calibration — you&apos;ll read a few simple phrases while the on-device MediaPipe models
+              learn your neutral head position, posture, and normal movement level. There&apos;s no right answer;
+              future sessions are compared with your own baseline instead of a generic average.
             </p>
             <p className="text-[15px] leading-relaxed text-white/60" style={{ fontWeight: 300 }}>
               First we'll open your camera and check the lighting, your face, and framing. Once that looks
@@ -469,20 +405,19 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               <p className="mt-1 text-[15px] leading-relaxed text-white/80" style={{ fontWeight: 300 }}>
                 Get your <span className="text-white">face and chest both in frame</span>, then
                 <span className="text-white"> don&apos;t move your camera</span> for the rest of the session.
-                Posture and breathing are measured against where you start.
+                Gaze, posture, and visible movement are measured against where you start.
               </p>
             </div>
           )}
           <div className="relative flex-1 min-h-0 border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
-            {stream ? (
-              <CameraFeed ref={videoRef} stream={stream} />
-            ) : (
+            <CameraFeed ref={videoRef} active={cameraActive} />
+            {mediaPipe.status !== "ready" && (
               <div className="flex flex-col items-center gap-2 text-white/25 px-6 text-center">
-                <Loader2 className="h-6 w-6 animate-spin" strokeWidth={1.6} />
+                {mediaPipe.status === "loading" && <Loader2 className="h-6 w-6 animate-spin" strokeWidth={1.6} />}
                 <span className="text-[12px] uppercase tracking-[0.16em]">
-                  {status === "error" ? "Camera failed to start" : "Starting camera…"}
+                  {mediaPipe.status === "error" ? "Local models failed to start" : "Loading local models…"}
                 </span>
-                {error && <span className="text-[11px] normal-case text-white/35 max-w-sm">{error}</span>}
+                {mediaPipe.error && <span className="text-[11px] normal-case text-white/35 max-w-sm">{mediaPipe.error}</span>}
               </div>
             )}
             <span className="absolute top-3 left-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-white/45">
@@ -536,7 +471,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
         <>
           <div className="flex-1 min-h-0 flex flex-col gap-4 p-4">
             <div className="relative flex-1 min-h-0 border border-white/12 bg-white/[0.02] overflow-hidden flex items-center justify-center">
-              {stream && <CameraFeed ref={videoRef} stream={stream} />}
+              <CameraFeed ref={videoRef} active={cameraActive} />
               <span className="absolute bottom-3 left-3 text-[13px] text-white/80 bg-black/40 px-2 py-1">You</span>
               <span className="absolute top-3 left-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-white/45">
                 <span className="h-2 w-2 bg-white" /> Calibrating
@@ -598,14 +533,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
                       setGazeCalibrationOpen(false);
                       setGazeCalibrationDone(true);
                       if (preflight) {
-                        // Preflight captures the posture baseline and stops.
-                        // The Presage half of the baseline needs the 40-second
-                        // reading, which we deliberately do not run before an
-                        // interview -- those signals simply go unbaselined and
-                        // the scoring degrades the way it already does for any
-                        // missing signal.
-                        const baseline = buildBaseline(samplesRef.current, Math.max(holdMs, 1));
-                        baseline.mediaPipe = buildMediaPipeBaseline(mediaPipeSamplesRef.current);
+                        const baseline = buildBaseline(mediaPipeSamplesRef.current);
                         pendingBaseline.current = { baseline, id: crypto.randomUUID() };
                         void persistBaseline();
                         onDone();
@@ -613,7 +541,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
                       }
                       setReadingInstructionsOpen(true);
                     }}
-                    disabled={mediaPipe.status === "loading"}
+                    disabled={mediaPipe.status !== "ready" || mediaPipeSamplesRef.current.length < 5}
                     className="mt-6 h-11 bg-white px-5 text-[13px] font-semibold text-black transition-opacity active:opacity-70 disabled:opacity-40"
                   >
                     {preflight ? "Start interview" : "Continue"}

@@ -1,4 +1,4 @@
-export type LiveMetricKey = "Emotion" | "Pulse" | "Eye Contact" | "Posture" | "Stress";
+export type LiveMetricKey = "Eye Contact" | "Posture" | "Nervousness";
 
 /**
  * Resolve both canonical trait labels from Results and the plain-language
@@ -11,16 +11,14 @@ export function liveMonitorKeysForTarget(target: string | null | undefined): Liv
 
   const normalized = target.trim().toLowerCase();
 
-  if (normalized.includes("body language")) return ["Eye Contact", "Posture"];
+  if (normalized.includes("body language")) return ["Eye Contact", "Posture", "Nervousness"];
   if (normalized.includes("eye contact")) return ["Eye Contact"];
   if (normalized.includes("fidget") || normalized.includes("posture")) return ["Posture"];
+  if (normalized.includes("nervous") || normalized.includes("composure") || normalized.includes("stress")) return ["Nervousness"];
 
   const exact: Record<string, LiveMetricKey[]> = {
-    composure: ["Stress", "Emotion"],
-    "emotional steadiness": ["Emotion", "Stress"],
-    "stress recovery": ["Stress", "Pulse"],
-    "breathing steadiness": ["Pulse"],
-    "positive presence": ["Emotion"],
+    composure: ["Nervousness"],
+    "emotional steadiness": ["Nervousness"],
   };
 
   return exact[normalized] ?? null;

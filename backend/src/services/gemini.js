@@ -1,5 +1,5 @@
 // Gemini API — reasoning core.
-// Receives signals from perception/speech/presage, drives the recruiter
+// Receives signals from perception and speech, drives the recruiter
 // persona, and routes output to ElevenLabs (voice) + the data layer (logging).
 
 import { GoogleGenAI } from '@google/genai';
@@ -179,7 +179,7 @@ function getClient() {
 }
 
 // --- Dev/test tool ---------------------------------------------------
-// Static-prompt sanity check: no perception/presage signals involved.
+// Static-prompt sanity check: no perception signals involved.
 // Called by POST /api/services/gemini/test and /gemini/speak (see routes/services.js).
 // history is an array of { role: "user" | "model", parts: [{ text }] }
 // from previous turns, so multi-turn context is preserved between calls.
@@ -225,11 +225,11 @@ export async function generateOpeningLine(sessionContext = {}) {
 }
 
 // --- Production entry point -------------------------------------------
-// Wired to Perception/Presage once those biometric signal producers exist
+// Wired to local perception once those signal producers are consumed here
 // on this side (camera-derived signals currently live entirely in the
-// frontend — see usePresageSession.ts). Left unimplemented intentionally.
-export async function generateCoachResponse({ transcript, perceptionSignals, presageSignal, sessionContext }) {
-  // TODO: call Gemini API with transcript + perceptionSignals + presageSignal + sessionContext
+// frontend. Left unimplemented intentionally.
+export async function generateCoachResponse({ transcript, perceptionSignals, sessionContext }) {
+  // TODO: generate a response from transcript + perceptionSignals + sessionContext
   throw new Error('gemini.generateCoachResponse not implemented');
 }
 

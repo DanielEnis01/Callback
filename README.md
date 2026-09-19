@@ -7,7 +7,7 @@ A desktop mock-interview coach. An AI recruiter interviews you by voice about
 while you answer, and scores 23 traits from what you actually said and did — then
 remembers it, so the next interview knows where you were weak.
 
-**Sponsor tracks:** ElevenLabs · Presage · Tiger Data · Backboard · Gemini API · Vultr · GoDaddy
+**Sponsor tracks:** ElevenLabs · Tiger Data · Backboard · Gemini API · Vultr · GoDaddy
 
 ---
 
@@ -24,12 +24,11 @@ to assess. It ends itself after the fourth question.
 The résumé is passed to Gemini as the **raw PDF**, not extracted text — no
 parsing step, no lossy intermediate.
 
-**3. Get measured, while you talk.** Three signal sources run at once:
+**3. Get measured, while you talk.** Two signal sources run at once:
 
 | Source | Measures |
 |---|---|
-| **Presage SmartSpectra** | pulse, stress, emotional signal from the camera |
-| **MediaPipe Face Mesh** | gaze direction, blink rate, posture shifts, fidgeting |
+| **MediaPipe Face + Pose** | gaze direction, posture shifts, fidgeting, and a 0–100 visible nervousness proxy |
 | **Python analysis service** | STAR structure, filler words, hedging, repeated words, unfinished sentences, tangents, non-answers |
 
 **4. Get results.** A per-question critique with a rating and a concrete fix,
@@ -73,10 +72,10 @@ so it's treated as data, never instructions.
 ```
   Electron desktop app (React + Vite)
     │
-    ├── MediaPipe Face Mesh ──┐  gaze / posture / blink      (in-renderer)
-    ├── Presage SmartSpectra ─┤  pulse / stress / emotion    (native bridge)
-    │                         │
-    └── HTTPS ────────────────┴──►  Node / Express backend
+    ├── MediaPipe Face + Pose ─── gaze / posture / nervousness proxy
+    │                             (bundled models, in-renderer, no vision API)
+    │
+    └── HTTPS ──────────────────► Node / Express backend
                                       │
                 ┌─────────────────────┼──────────────────────┐
                 │                     │                      │
@@ -139,19 +138,19 @@ boot, so there's no migration step.
 ```bash
 cd frontend
 npm install
-cp .env.example .env      # VITE_FIREBASE_*, VITE_SMARTSPECTRA_API_KEY
+cp .env.example .env      # no vision API key required
 npm run electron:dev
 ```
 
-Electron (not a browser) is required — the Presage SDK runs natively in the main
-process and is bridged to the renderer over a MessagePort. macOS will prompt for
-camera and microphone on first launch; both are required.
+MediaPipe's WASM runtime and model files ship in `frontend/public`; inference
+runs locally in the Electron renderer. macOS will prompt for camera and
+microphone on first launch.
 
 ### Checks
 
 ```bash
 cd backend  && npm test              # 22 tests
-cd frontend && npm test              # 17 tests
+cd frontend && npm test              # 31 tests
 cd frontend && npm run build         # typecheck + production build
 cd backend  && npm run gemini:check  # which Gemini models your key can reach
 ```
@@ -168,8 +167,7 @@ already remote. Two things to know before you try:
    `dist/` from a local HTTP server inside Electron and `loadURL` it, then add
    that origin to Firebase's authorised domains and to `FRONTEND_ORIGIN`.
 2. `VITE_*` values are **inlined at build time** and ship inside the app.
-   Firebase web keys are public by design and fine; `VITE_SMARTSPECTRA_API_KEY`
-   is a real vendor key and will be readable by anyone who downloads a build.
+   Do not place private service credentials in frontend environment variables.
 
 Backend secrets (`GEMINI_API_KEY`, `ELEVENLABS_API_KEY`, `BACKBOARD_API_KEY`,
 `TIGER_DATA_PASSWORD`) are read at runtime from `backend/.env` and never enter
@@ -190,7 +188,7 @@ backend/
   sql/            idempotent schema + continuous aggregates
 frontend/
   src/            Dashboard · SessionMeeting · Results · Trends · Calibration
-  electron/       main + preload (Presage native bridge, media permissions)
+  electron/       main process and media permissions
 python/
   analysis_service.py         rule-based speech analysis (stdlib only)
 ```
@@ -199,6 +197,7 @@ python/
 
 ## A note on the signals
 
-Facial and vocal outputs are **engagement, focus and stress indicators for
-coaching** — not diagnoses, not a lie detector, not a clinical measurement. A
-signal with no recorded data is not shown rather than guessed at.
+The nervousness score is a **visible-behavior coaching proxy** based on gaze
+instability, head movement, posture shifts, and fidgeting. It is not an emotion
+classifier, diagnosis, lie detector, or clinical stress measurement. A signal
+with no recorded data is not shown rather than guessed at.

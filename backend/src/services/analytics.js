@@ -42,6 +42,11 @@ export const SIGNAL_CATALOG = {
     source: 'metrics', column: 'gaze_away_seconds', baselineField: null,
     describe: (v) => `Looking away from camera ${v}s per session on average`,
   },
+  nervousness_score: {
+    label: 'Nervousness proxy', unit: '/100', better: 'lower',
+    source: 'metrics', column: 'nervousness_score', baselineField: null,
+    describe: (v) => `Visible nervousness cues averaging ${v}/100`,
+  },
   stress_index_baevsky: {
     label: 'Stress index (Baevsky)', unit: '', better: 'closer', baselineFraming: true,
     source: 'metrics', column: 'stress_index_baevsky', baselineField: 'baseline_stress_index',
@@ -181,7 +186,8 @@ export const SIGNAL_CATALOG = {
 export const WEAKNESS_SIGNAL_HINTS = {
   'excessive filler words': 'filler_word_rate',
   'weak eye contact': 'gaze_away_seconds',
-  'fidgeting / posture shifts': 'fidget_score',
+  'fidgeting / posture shifts': 'posture_stability_score',
+  'composure': 'nervousness_score',
   'vague star examples': 'star_score',
   'not quantifying impact': 'quantified_rate',
 };
@@ -219,11 +225,10 @@ export const TRAIT_CATALOG = {
   },
   body_language: {
     label: 'Body Language',
-    description: 'How still and settled your posture was (seat + knee fidget score).',
-    signals: ['fidget_score'],
-    compute: ({ fidget_score }) => (fidget_score == null ? null
-      // Seat+knee fidget score of 0 -> 10, 2+ -> 0.
-      : clampScore(10 - (fidget_score / 2) * 10)),
+    description: 'How still and settled your posture remained.',
+    signals: ['posture_stability_score'],
+    compute: ({ posture_stability_score }) => (posture_stability_score == null ? null
+      : clampScore(posture_stability_score)),
   },
   eye_contact: {
     label: 'Eye Contact',
@@ -237,17 +242,10 @@ export const TRAIT_CATALOG = {
   },
   composure: {
     label: 'Composure',
-    description: 'How calm your stress index and heart rate stayed (lower = calmer).',
-    signals: ['stress_index_baevsky', 'pulse_rate'],
-    compute: ({ stress_index_baevsky, pulse_rate }) => {
-      const parts = [];
-      // Baevsky stress index: ~50 reads as calm, ~500 as very high stress.
-      if (stress_index_baevsky != null) parts.push(clampScore(10 - (stress_index_baevsky - 50) / 45));
-      // Resting-ish pulse ~70bpm -> 10, elevated ~120bpm+ -> 0.
-      if (pulse_rate != null) parts.push(clampScore(10 - (pulse_rate - 70) / 5));
-      if (!parts.length) return null;
-      return round(parts.reduce((a, b) => a + b, 0) / parts.length, 1);
-    },
+    description: 'A coaching estimate from visible gaze, head movement, posture shifts, and fidgeting—not a medical stress reading.',
+    signals: ['nervousness_score'],
+    compute: ({ nervousness_score }) => (nervousness_score == null ? null
+      : clampScore(10 - nervousness_score / 10)),
   },
   speech_fluency: {
     label: 'Speech Fluency',
@@ -541,6 +539,7 @@ async function buildSignalSeries(db, { userId, sessionRows }) {
     const point = (value) => ({ sessionId: row.session_id, startedAt: row.started_at, value: round(value, 2) });
     if (m) {
       if (m.gaze_away_seconds !== null && m.gaze_away_seconds !== undefined) series.gaze_away_seconds.push(point(Number(m.gaze_away_seconds)));
+      if (m.nervousness_score !== null && m.nervousness_score !== undefined) series.nervousness_score.push(point(Number(m.nervousness_score)));
       if (m.stress_index_baevsky !== null && m.stress_index_baevsky !== undefined) series.stress_index_baevsky.push(point(Number(m.stress_index_baevsky)));
       if (m.breathing_rate !== null && m.breathing_rate !== undefined) series.breathing_rate.push(point(Number(m.breathing_rate)));
       if (m.fidget_score_seat !== null && m.fidget_score_knee !== null && m.fidget_score_seat !== undefined && m.fidget_score_knee !== undefined) {

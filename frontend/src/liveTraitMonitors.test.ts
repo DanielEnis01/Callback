@@ -13,8 +13,13 @@ describe("liveMonitorKeysForTarget", () => {
   );
 
   it("shows both visual signals for the broader Body Language trait", () => {
-    expect(liveMonitorKeysForTarget("Body Language")).toEqual(["Eye Contact", "Posture"]);
+    expect(liveMonitorKeysForTarget("Body Language")).toEqual(["Eye Contact", "Posture", "Nervousness"]);
   });
+
+  it.each(["Composure", "Nervousness", "Stress management"]) (
+    "uses the local nervousness proxy for %s",
+    (target) => expect(liveMonitorKeysForTarget(target)).toEqual(["Nervousness"]),
+  );
 
   it("does not attach unrelated camera data to a text-only skill", () => {
     expect(liveMonitorKeysForTarget("Answer Structure")).toBeNull();

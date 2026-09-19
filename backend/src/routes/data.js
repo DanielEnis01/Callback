@@ -7,7 +7,7 @@ import { computeSessionAnalysis } from '../services/sessionAnalysis.js';
 import { getTranscriptAnalysis } from '../services/transcriptAnalysisStore.js';
 
 const baselineFields = 'baseline_stress_index baseline_pulse baseline_breathing_rate baseline_blink_rate baseline_fidget_score baseline_eda baseline_arterial_pressure baseline_breathing_amplitude baseline_inhale_exhale_ratio'.split(' ');
-const metricFields = 'filler_word_count filler_word_rate speaking_rate_wpm pause_frequency avg_pause_duration topic_relevance_score gaze_away_seconds posture_stability_score dominant_emotion emotion_breakdown stress_index_baevsky rmssd sdnn mean_nn pulse_rate breathing_rate blink_rate apnea_event_count fidget_score_seat fidget_score_knee eda_level arterial_pressure_relative breathing_upper_lower_ratio inhale_exhale_ratio respiratory_line_length breathing_amplitude consistency_confidence_score overall_session_score'.split(' ');
+const metricFields = 'filler_word_count filler_word_rate speaking_rate_wpm pause_frequency avg_pause_duration topic_relevance_score gaze_away_seconds posture_stability_score nervousness_score dominant_emotion emotion_breakdown stress_index_baevsky rmssd sdnn mean_nn pulse_rate breathing_rate blink_rate apnea_event_count fidget_score_seat fidget_score_knee eda_level arterial_pressure_relative breathing_upper_lower_ratio inhale_exhale_ratio respiratory_line_length breathing_amplitude consistency_confidence_score overall_session_score'.split(' ');
 const resources = {
   resumes: { table: 'resumes', order: 'uploaded_at DESC, resume_id' },
   'job-postings': { table: 'job_postings', order: 'uploaded_at DESC, job_posting_id' },
@@ -37,6 +37,7 @@ function validateFields(body, fields) {
     } else if (key === 'emotion_breakdown') {
       if (typeof value !== 'object' || Array.isArray(value) || Object.values(value).some(v => typeof v !== 'number' || !Number.isFinite(v))) throw new HttpError(400, 'emotion_breakdown must map emotion names to numeric values.');
     } else if (typeof value !== 'number' || !Number.isFinite(value) || (key.endsWith('_count') && !Number.isInteger(value))) throw new HttpError(400, `${key} must be a finite${key.endsWith('_count') ? ' integer' : ''} number.`);
+    else if (key === 'nervousness_score' && (value < 0 || value > 100)) throw new HttpError(400, 'nervousness_score must be between 0 and 100.');
   }
 }
 export function createDataRouter(db) {
