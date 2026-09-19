@@ -95,6 +95,60 @@ try {
   debugLog("SmartSpectra SDK loaded OK");
 } catch (err) {
   debugLog(`SmartSpectra SDK FAILED to load: ${(err && err.stack) || err}`);
+
+  // Two straight builds have bundled every dependency the shipped DLLs'
+  // own PE import tables name, and it still fails with the same generic
+  // "specified module could not be found" -- which Windows gives both for
+  // "this file is missing" AND "one of THIS file's dependencies is
+  // missing", with no indication which. Rather than guess a third
+  // dependency to bundle, ask the loader that's actually failing
+  // (koffi's LoadLibrary call) to try each DLL in nativeDir on its own.
+  // Loading a DLL individually exercises the exact same OS dependency
+  // resolution as the real failure, so whichever one throws here is the
+  // actual broken link on this machine -- not a hypothesis, a direct
+  // reproduction.
+  if (process.platform === "win32" && nativeDir) {
+    debugLog("Probing each DLL in nativeDir individually via koffi.load() " +
+      "to find which one actually fails to load...");
+    try {
+      const koffiProbe = require("koffi");
+      // Leaf-first order: load the things everything else depends on
+      // before the things that depend on them, so a failure higher up
+      // the chain doesn't get masked by an earlier one lower down.
+      const probeOrder = [
+        "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "VCRUNTIME140_THREADS.dll",
+        "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_2.dll",
+        "MSVCP140_ATOMIC_WAIT.dll", "MSVCP140_CODECVT_IDS.dll",
+        "CONCRT140.dll", "VCCORLIB140.dll",
+        "ncrypt.dll", "mfplat.dll", "mf.dll", "mfreadwrite.dll",
+        "vulkan-1.dll", "opencv_world4100.dll",
+        "smartspectra.dll", "smartspectra_capi.dll",
+      ];
+      let allDlls;
+      try {
+        allDlls = fs.readdirSync(nativeDir).filter((f) => f.toLowerCase().endsWith(".dll"));
+      } catch (e) {
+        allDlls = [];
+      }
+      // Probe the known set in dependency order, then anything else found
+      // in the directory that wasn't already covered above.
+      const ordered = [
+        ...probeOrder.filter((f) => allDlls.some((x) => x.toLowerCase() === f.toLowerCase())),
+        ...allDlls.filter((f) => !probeOrder.some((p) => p.toLowerCase() === f.toLowerCase())),
+      ];
+      for (const dllName of ordered) {
+        const dllPath = path.join(nativeDir, dllName);
+        try {
+          koffiProbe.load(dllPath);
+          debugLog(`  PROBE OK:   ${dllName}`);
+        } catch (probeErr) {
+          debugLog(`  PROBE FAIL: ${dllName} -- ${(probeErr && probeErr.message) || probeErr}`);
+        }
+      }
+    } catch (probeSetupErr) {
+      debugLog(`Probe setup itself failed: ${(probeSetupErr && probeSetupErr.stack) || probeSetupErr}`);
+    }
+  }
 }
 
 const isDev = !app.isPackaged;
