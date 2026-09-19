@@ -44,17 +44,34 @@ jobs:
         run: npm ci
 
       - name: Bundle the VC++ runtime DLLs (self-contained native deps)
+        # smartspectra_capi.dll's own dependency tree (verified by parsing every
+        # DLL's PE import table, not guessed) needs more than the original 4
+        # files -- smartspectra.dll itself imports MSVCP140_ATOMIC_WAIT.dll (a
+        # separate file shipped alongside msvcp140.dll in the modern VC++
+        # redistributable, added for C++20 atomic wait/notify support), which
+        # earlier builds never copied. That's what caused "Failed to load
+        # shared library" to persist even after the PATH/SetDllDirectory fixes,
+        # since those only fixed *finding* the folder, not what's missing from
+        # it. The extra entries below are the rest of the modern VC++ redist's
+        # companion DLL set, bundled defensively so a 6th missing-file report
+        # doesn't send us on another round trip -- each is Test-Path-guarded so
+        # a runner without one just warns instead of failing the build.
         shell: pwsh
         run: |
           $dest = "node_modules/@smartspectra/node-sdk-win32-x64"
-          $files = @("MSVCP140.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "CONCRT140.dll")
+          $files = @(
+            "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_2.dll",
+            "MSVCP140_ATOMIC_WAIT.dll", "MSVCP140_CODECVT_IDS.dll",
+            "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "VCRUNTIME140_THREADS.dll",
+            "CONCRT140.dll", "VCCORLIB140.dll"
+          )
           foreach ($f in $files) {
             $src = "C:\Windows\System32\$f"
             if (Test-Path $src) {
               Copy-Item $src $dest
               Write-Host "Bundled $f"
             } else {
-              Write-Warning "$f not found on runner at $src -- app may still hit missing-module errors on end-user machines"
+              Write-Warning "$f not found on runner at $src -- skipping (not necessarily a problem, not every app needs every companion DLL)"
             }
           }
 
