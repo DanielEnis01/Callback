@@ -144,13 +144,22 @@ jobs:
       - name: Upload Windows installer to the v1.0.0 release
         # --clobber replaces an existing asset of the same name in one step,
         # so this also removes the need for the separate delete-first step a
-        # previous commit added.
+        # previous commit added. This step failed on v1.0.0-ci8 with only a
+        # bare "exit code 1" visible (the actual gh error is in the raw job
+        # log, which needs authenticated access this session doesn't have) --
+        # so this version explicitly captures and prints gh's own output and
+        # the release/ directory listing as ::error:: annotations, which ARE
+        # visible on the run summary without auth, so the real cause shows up
+        # here instead of a dead end.
         shell: pwsh
         run: |
-          gh release upload v1.0.0 `
-            "release/Callback-Setup-1.0.0.exe" `
-            "release/Callback-1.0.0-win.zip" `
-            --clobber --repo DanielEnis01/Callback
+          Write-Host "::notice::release/ contents: $((Get-ChildItem release -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', ')"
+          $output = gh release upload v1.0.0 "release/Callback-Setup-1.0.0.exe" "release/Callback-1.0.0-win.zip" --clobber --repo DanielEnis01/Callback 2>&1 | Out-String
+          Write-Host "::notice::gh release upload output: $output"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::gh release upload failed (exit $LASTEXITCODE): $output"
+            exit 1
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -181,8 +190,18 @@ jobs:
         run: npx electron-builder --mac
 
       - name: Upload macOS dmg to the v1.0.0 release
+        # See the Windows job's equivalent step: v1.0.0-ci8 failed here too
+        # with only a bare "exit code 1" visible, so this captures gh's own
+        # output as an ::error:: annotation instead of leaving a dead end.
         shell: bash
         run: |
-          gh release upload v1.0.0 release/*.dmg --clobber --repo DanielEnis01/Callback
+          echo "::notice::release/ contents: $(ls release/ 2>&1 | tr '\n' ' ')"
+          output=$(gh release upload v1.0.0 release/*.dmg --clobber --repo DanielEnis01/Callback 2>&1)
+          status=$?
+          echo "::notice::gh release upload output: $output"
+          if [ $status -ne 0 ]; then
+            echo "::error::gh release upload failed (exit $status): $output"
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
