@@ -1,0 +1,92 @@
+name: Build & Release Desktop App
+
+# Builds the Electron desktop app natively on real Windows and macOS
+# runners (avoids all the Wine/cross-build limitations of building from a
+# non-Windows, non-macOS machine) and publishes the installers straight to
+# the matching GitHub Release.
+#
+# Triggers:
+#   - Pushing a version tag (v1.0.0, v1.2.3, ...) builds + publishes that
+#     release automatically.
+#   - Manual "Run workflow" lets you rebuild/republish an existing tag
+#     on demand (e.g. to pick up a packaging fix without cutting a new
+#     version).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach installers to (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bundle the VC++ runtime DLLs (self-contained native deps)
+        shell: pwsh
+        run: |
+          $dest = "node_modules/@smartspectra/node-sdk-win32-x64"
+          $files = @("MSVCP140.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "CONCRT140.dll")
+          foreach ($f in $files) {
+            $src = "C:\Windows\System32\$f"
+            if (Test-Path $src) {
+              Copy-Item $src $dest
+              Write-Host "Bundled $f"
+            } else {
+              Write-Warning "$f not found on runner at $src -- app may still hit missing-module errors on end-user machines"
+            }
+          }
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Build and publish Windows installer
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-mac:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Build and publish macOS dmg
+        run: npx electron-builder --mac --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
