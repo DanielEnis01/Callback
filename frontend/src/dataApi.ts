@@ -1,13 +1,36 @@
 import { getFirebaseAuth } from './firebase';
 
 const base = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3001').replace(/\/$/, '');
+// Render's free tier spins a web service down after ~15 minutes idle and
+// cold-starts it on the next request -- which can take 30-60+ seconds
+// (Node boot, DB pool connect, Firebase admin init). A tight timeout here
+// means the FIRST request after any idle period reliably aborts before the
+// backend ever gets to respond, even though the backend is perfectly
+// healthy and the same request succeeds moments later once it's warm --
+// exactly the "times out once, then works after you come back" pattern.
+// 45s comfortably covers a cold start without leaving a truly-stuck
+// request hanging forever.
+const API_TIMEOUT_MS = 45000;
+
 export async function apiRequest(path: string, options: RequestInit = {}) {
   const user = getFirebaseAuth().currentUser;
   if (!user) throw new Error('Sign in before saving data.');
   const token = await user.getIdToken();
   const headers = new Headers(options.headers);
   headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(`${base}/api${path}`, { ...options, headers, signal: AbortSignal.timeout(15000) });
+  let response: Response;
+  try {
+    response = await fetch(`${base}/api${path}`, { ...options, headers, signal: AbortSignal.timeout(API_TIMEOUT_MS) });
+  } catch (err) {
+    // AbortSignal.timeout()'s DOMException has a raw, confusing message
+    // ("signal timed out") that gives no indication this is very likely a
+    // cold-starting backend rather than an actual failure -- surface
+    // something a user can act on instead.
+    if (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+      throw new Error('The server is taking longer than expected to respond -- it may be waking up from idle. Please try again in a moment.');
+    }
+    throw err;
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
     throw new Error(payload?.error || `Storage request failed (${response.status}).`);

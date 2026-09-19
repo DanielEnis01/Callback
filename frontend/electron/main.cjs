@@ -139,6 +139,28 @@ if (process.platform === "win32") {
 
 const { app, BrowserWindow, session, systemPreferences, dialog } = require("electron");
 
+// Google actively blocks Google sign-in (the signInWithPopup flow in
+// AuthContext.tsx) inside Electron's default User-Agent -- it contains an
+// "Electron/x.y.z" token that Google's OAuth endpoint recognizes as an
+// embedded webview and refuses with "Error 403: disallowed_useragent",
+// regardless of the popup window's own webPreferences being otherwise
+// correct. This has nothing to do with Firebase config or network
+// connectivity; it's Google's own embedded-browser detection.
+//
+// The standard workaround (used across the Electron+Firebase ecosystem) is
+// to present a normal desktop Chrome User-Agent instead. Built from
+// process.versions.chrome so it always matches the REAL Chromium version
+// this Electron build actually ships, rather than a UA string that goes
+// stale the next time Electron is upgraded.
+const PLATFORM_UA_TOKEN = {
+  win32: "Windows NT 10.0; Win64; x64",
+  darwin: "Macintosh; Intel Mac OS X 10_15_7",
+  linux: "X11; Linux x86_64",
+}[process.platform] || "Windows NT 10.0; Win64; x64";
+app.userAgentFallback =
+  `Mozilla/5.0 (${PLATFORM_UA_TOKEN}) AppleWebKit/537.36 (KHTML, like Gecko) ` +
+  `Chrome/${process.versions.chrome} Safari/537.36`;
+
 let bindSmartSpectraIpc = null;
 try {
   debugLog("requiring @smartspectra/node-sdk/main ...");

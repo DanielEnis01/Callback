@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, FC } from "react";
 import { Check, X, Sun, ScanFace, AlignVerticalSpaceAround, Loader2, FileText, UploadCloud, Eye } from "lucide-react";
 import { CameraFeed } from "./CameraFeed";
+import { CameraPermissionStep } from "./CameraPermissionStep";
 import { useCalibrationSession, type CalibrationSample } from "./useCalibrationSession";
 import { remoteStorageEnabled, saveBaseline, saveInterviewProfile, type Baseline } from "./baselineStore";
 import { uploadResume } from "./dataApi";
@@ -22,7 +23,7 @@ interface CalibrationSessionProps {
   preflight?: boolean;
 }
 
-type Phase = "profile" | "intro" | "checking" | "recording" | "done";
+type Phase = "profile" | "intro" | "camera" | "checking" | "recording" | "done";
 
 const RECORDING_SECONDS = 40;
 // How long every readiness check has to hold true, back-to-back, before we
@@ -81,7 +82,7 @@ function buildBaseline(samples: CalibrationSample[], recordedMs: number): Baseli
 }
 
 export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCancel, preflight = false }) => {
-  const [phase, setPhase] = useState<Phase>(preflight ? "checking" : "intro");
+  const [phase, setPhase] = useState<Phase>(preflight ? "camera" : "intro");
   const [elapsed, setElapsed] = useState(0);
   const [holdMs, setHoldMs] = useState(0);
   const [brightness, setBrightness] = useState<number | null>(null);
@@ -103,6 +104,24 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 });
+
+  // Camera stream acquired up front by CameraPermissionStep, with the
+  // user's explicit permission and (when there's more than one camera)
+  // their chosen device. Handed into useCalibrationSession below, which
+  // passes it to the SmartSpectra SDK via useMediaStream() instead of
+  // letting the SDK silently acquire its own default camera. Per that
+  // API's contract the host owns this stream's lifecycle, so it's stopped
+  // here on unmount rather than by the hook.
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  useEffect(() => {
+    cameraStreamRef.current = cameraStream;
+  }, [cameraStream]);
+  useEffect(() => {
+    return () => {
+      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   const selectResume = (file: File | undefined) => {
     if (!file) return;
@@ -142,7 +161,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
   // Do not collect baseline samples or advance the clock while the reading
   // instructions or gaze calibration are in front of the passage.
   const recording = phase === "recording" && !readingInstructionsOpen && !gazeCalibrationOpen;
-  const { stream, status, error, faceBox, samplesRef } = useCalibrationSession(cameraActive, recording, videoSize);
+  const { stream, status, error, faceBox, samplesRef } = useCalibrationSession(cameraActive, recording, videoSize, cameraStream);
 
   // MediaPipe runs alongside Presage, tracking neutral head orientation
   // and resting posture to build the MediaPipeBaseline.
@@ -324,7 +343,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
                 targetRoles: targetRoles.trim(),
                 resume: { name: resumeFile.name, size: resumeFile.size },
               });
-              setPhase("checking");
+              setPhase("camera");
               } catch (error) { setSaveError((error as Error).message); }
               finally { setSaving(false); }
             }}
@@ -459,6 +478,16 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
         </div>
       )}
 
+      {phase === "camera" && (
+        <CameraPermissionStep
+          onReady={(s) => {
+            setCameraStream(s);
+            setPhase("checking");
+          }}
+          onCancel={onCancel}
+        />
+      )}
+
       {phase === "checking" && (
         <div className="flex-1 min-h-0 flex flex-col gap-4 p-4">
           {/* The only two things the user has to get right, stated once and
@@ -550,29 +579,37 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
               )}
             </div>
 
-            {/* Reading passage — scroll at a comfortable pace while recording */}
-            <div className="shrink-0 border border-white/12 p-5">
-              <span className="text-[11px] uppercase tracking-[0.16em] text-white/40">
-                Read aloud and scroll at your own pace until the timer completes
-              </span>
-              <div className="relative mt-2 h-48">
-                <div className="calibration-reading-passage h-full overflow-y-auto pr-1" tabIndex={0}>
-                  <ul className="space-y-4">
-                    {quotes.map((q, i) => (
-                      <li key={i} className="text-[19px] leading-relaxed text-white/85" style={{ fontWeight: 300 }}>
-                        {q}
-                      </li>
-                    ))}
-                  </ul>
+            {/* Reading passage — scroll at a comfortable pace while recording.
+                Only mounted once both the posture-baseline ("hold still") and
+                reading-instructions modals have been dismissed -- previously
+                this rendered the whole time the "recording" phase was active,
+                including underneath those two modals, and their bg-black/80
+                backdrop wasn't fully opaque, so the quotes list visibly
+                bled through behind the "hold your natural posture" step. */}
+            {recording && (
+              <div className="shrink-0 border border-white/12 p-5">
+                <span className="text-[11px] uppercase tracking-[0.16em] text-white/40">
+                  Read aloud and scroll at your own pace until the timer completes
+                </span>
+                <div className="relative mt-2 h-48">
+                  <div className="calibration-reading-passage h-full overflow-y-auto pr-1" tabIndex={0}>
+                    <ul className="space-y-4">
+                      {quotes.map((q, i) => (
+                        <li key={i} className="text-[19px] leading-relaxed text-white/85" style={{ fontWeight: 300 }}>
+                          {q}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-black to-transparent" />
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-4 bg-gradient-to-t from-black to-transparent" />
                 </div>
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-black to-transparent" />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-4 bg-gradient-to-t from-black to-transparent" />
               </div>
-            </div>
+            )}
 
             {/* Gaze calibration step — "look directly at the camera" */}
             {gazeCalibrationOpen && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black p-6">
                 <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
                   <div className="flex items-center gap-3 mb-2">
                     <ScanFace className="h-5 w-5 text-white/60" strokeWidth={1.6} />
@@ -624,7 +661,7 @@ export const CalibrationSession: FC<CalibrationSessionProps> = ({ onDone, onCanc
 
             {/* Reading instructions modal */}
             {readingInstructionsOpen && !gazeCalibrationOpen && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 p-6">
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black p-6">
                 <div className="w-full max-w-lg border border-white/20 bg-black p-6 shadow-2xl">
                   <p className="text-[11px] uppercase tracking-[0.16em] text-white/40">Before you begin</p>
                   <h2 className="mt-2 text-[24px] font-800 tracking-tight" style={{ fontWeight: 800 }}>

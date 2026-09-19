@@ -85,7 +85,22 @@ function boundingBoxOf(points: Array<{ x?: number | null; y?: number | null }>, 
   return { minX, maxX, minY, maxY };
 }
 
-export function useCalibrationSession(active: boolean, recording: boolean, videoSize: { width: number; height: number }) {
+export function useCalibrationSession(
+  active: boolean,
+  recording: boolean,
+  videoSize: { width: number; height: number },
+  /**
+   * A camera stream the host (CalibrationSession, via CameraPermissionStep)
+   * already acquired with the user's chosen device and explicit
+   * permission. When supplied, the SDK is told to use it via
+   * useMediaStream() instead of silently acquiring its own default camera
+   * -- which is what used to produce a bare, unexplained "NotReadableError"
+   * with no device picker and no way to recover. The host owns this
+   * stream's lifecycle (per the SDK's own contract for useMediaStream()):
+   * this hook never stops its tracks.
+   */
+  externalStream?: MediaStream | null,
+) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState<CalibrationStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +109,10 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
   const samplesRef = useRef<CalibrationSample[]>([]);
   const recordingRef = useRef(recording);
   const videoSizeRef = useRef(videoSize);
+  const externalStreamRef = useRef<MediaStream | null | undefined>(externalStream);
+  useEffect(() => {
+    externalStreamRef.current = externalStream;
+  }, [externalStream]);
   const lastFaceBoxRef = useRef<FaceBox | null>(null);
   const lastFaceSeenAtRef = useRef(0);
   const lastBlinkDetectedRef = useRef(false);
@@ -144,6 +163,15 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
     }
 
     let cancelled = false;
+
+    if (externalStreamRef.current) {
+      // Host-supplied stream: hand it to the SDK before start() so it never
+      // tries to acquire a camera itself. Per useMediaStream()'s own
+      // contract, 'streamAvailable' will NOT fire in this case, so set the
+      // preview stream directly instead of waiting on that event.
+      sdk.useMediaStream(externalStreamRef.current);
+      setStream(externalStreamRef.current);
+    }
 
     sdk.on("streamAvailable", (s) => {
       if (cancelled) return;
