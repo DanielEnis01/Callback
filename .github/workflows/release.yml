@@ -73,7 +73,21 @@ jobs:
             "MSVCP140.dll", "MSVCP140_1.dll", "MSVCP140_2.dll",
             "MSVCP140_ATOMIC_WAIT.dll", "MSVCP140_CODECVT_IDS.dll",
             "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "VCRUNTIME140_THREADS.dll",
-            "CONCRT140.dll", "VCCORLIB140.dll"
+            "CONCRT140.dll", "VCCORLIB140.dll",
+            # Found by actually parsing smartspectra.dll's and
+            # opencv_world4100.dll's PE import tables (pefile, not another
+            # guess) after MSVCP140_ATOMIC_WAIT.dll alone still didn't fix
+            # the "specified module could not be found" crash on a real
+            # test machine: they also import Windows Media Foundation
+            # (MF.dll/MFPlat.dll/MFReadWrite.dll) and ncrypt.dll. These ship
+            # in System32 on regular Windows 10/11 Home/Pro (including this
+            # CI runner), but Media Foundation specifically is OPTIONAL and
+            # absent by default on Windows N/KN editions (common in the EU)
+            # unless the separate Media Feature Pack is installed -- which
+            # fits a failure that survives bundling the full VC++ redist set.
+            # Bundling our own copies makes the app self-contained instead
+            # of depending on that optional OS feature being present.
+            "mf.dll", "mfplat.dll", "mfreadwrite.dll", "ncrypt.dll"
           )
 
           $searchRoots = @("C:\Windows\System32")
