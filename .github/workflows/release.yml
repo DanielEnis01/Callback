@@ -65,13 +65,38 @@ jobs:
             "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "VCRUNTIME140_THREADS.dll",
             "CONCRT140.dll", "VCCORLIB140.dll"
           )
+          # System32 only has what's registered system-wide on this runner
+          # image -- confirmed by shipping build v1.0.0-ci4 and finding
+          # MSVCP140_ATOMIC_WAIT.dll missing from the actual installer, because
+          # this runner's System32 doesn't have it even though the file we
+          # need genuinely exists on the machine. Visual Studio's own VC++
+          # Redist payload -- present on every windows-latest runner because
+          # it's what Build Tools ships so *other* projects can bundle the
+          # CRT -- carries the complete, current set regardless of what's
+          # installed into System32, so search it too, as a second and much
+          # more complete source.
+          $searchRoots = @("C:\Windows\System32")
+          $vsRedistRoots = Get-ChildItem "C:\Program Files*\Microsoft Visual Studio" -Directory -ErrorAction SilentlyContinue |
+            Get-ChildItem -Recurse -Directory -Filter "x64" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "\\Redist\\MSVC\\" } |
+            Select-Object -ExpandProperty FullName
+          $searchRoots += $vsRedistRoots
+
+          Write-Host "Search roots:"
+          $searchRoots | ForEach-Object { Write-Host "  $_" }
+
           foreach ($f in $files) {
-            $src = "C:\Windows\System32\$f"
-            if (Test-Path $src) {
-              Copy-Item $src $dest
-              Write-Host "Bundled $f"
+            $found = $null
+            foreach ($root in $searchRoots) {
+              if (-not (Test-Path $root)) { continue }
+              $candidate = Get-ChildItem -Path $root -Filter $f -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($candidate) { $found = $candidate.FullName; break }
+            }
+            if ($found) {
+              Copy-Item $found (Join-Path $dest $f) -Force
+              Write-Host "Bundled $f from $found"
             } else {
-              Write-Warning "$f not found on runner at $src -- skipping (not necessarily a problem, not every app needs every companion DLL)"
+              Write-Warning "$f not found anywhere on this runner (System32 or VS redist payloads) -- skipping"
             }
           }
 
