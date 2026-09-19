@@ -11,7 +11,8 @@
     "electron:dev": "PATH=/opt/homebrew/opt/node@22/bin:$PATH concurrently -k -n VITE,ELECTRON \"vite\" \"wait-on tcp:5173 && cross-env ELECTRON_START_URL=http://127.0.0.1:5173 electron .\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dist:mac": "npm run build && electron-builder --mac --publish=never"
+    "dist:mac": "npm run build && electron-builder --mac --publish=never",
+    "dist:win": "npm run build && electron-builder --win --publish=never"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.22",
@@ -54,7 +55,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/@smartspectra/node-sdk-linux-*/**"
     ],
     "asarUnpack": [
       "**/node_modules/@smartspectra/**",
@@ -65,7 +67,23 @@
     },
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "files": [
+        "!node_modules/@smartspectra/node-sdk-win32-*/**"
+      ]
+    },
+    "afterSign": "scripts/afterSignAdHoc.cjs",
+    "win": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
     }
   }
 }
