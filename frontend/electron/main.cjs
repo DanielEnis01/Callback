@@ -1,6 +1,29 @@
+const path = require("node:path");
+
+// Windows does NOT search the directory of a DLL that's being dynamically
+// loaded via koffi.load() as part of its classic/default LoadLibrary search
+// order -- only the app's own exe directory, System32, and PATH. So the
+// very first attempt to load smartspectra_capi.dll can fail to resolve its
+// sibling dependencies (MSVCP140.dll, opencv_world4100.dll, smartspectra.dll,
+// ...) even though every one of those files is physically sitting right
+// next to it, unpacked from the asar. Prepending that folder to PATH here,
+// before @smartspectra/node-sdk is required (which loads the native lib at
+// module-load time), makes sure the very first LoadLibrary call already
+// finds everything -- this must not depend on koffi's own internal
+// LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR fallback actually firing.
+if (process.platform === "win32") {
+  try {
+    const nativeDir = path.dirname(
+      require.resolve("@smartspectra/node-sdk-win32-x64/package.json")
+    );
+    process.env.PATH = `${nativeDir};${process.env.PATH || ""}`;
+  } catch (err) {
+    console.warn("[Callback] could not prepend SmartSpectra native dir to PATH:", err);
+  }
+}
+
 const { app, BrowserWindow, session, systemPreferences } = require("electron");
 const { bindSmartSpectraIpc } = require("@smartspectra/node-sdk/main");
-const path = require("node:path");
 
 const isDev = !app.isPackaged;
 const startUrl = process.env.ELECTRON_START_URL || "http://localhost:5173";
