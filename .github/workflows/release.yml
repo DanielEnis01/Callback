@@ -139,7 +139,16 @@ jobs:
         # uploading explicitly below with `gh release upload`, the same tool
         # GitHub itself recommends for CI asset uploads, sidesteps whatever
         # is unreliable about electron-builder's own large-file publish path.
-        run: npx electron-builder --win
+        shell: pwsh
+        run: |
+          $output = (npx electron-builder --win 2>&1 | Out-String)
+          $flat = ($output -replace "`r`n", ' | ' -replace "`n", ' | ').Trim()
+          if ($flat.Length -gt 3500) { $flat = "..." + $flat.Substring($flat.Length - 3500) }
+          Write-Host "::notice::electron-builder --win exit=$LASTEXITCODE tail=$flat"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::electron-builder --win failed (exit ${LASTEXITCODE}): $flat"
+            exit 1
+          }
 
       - name: Upload Windows installer to the v1.0.0 release
         # --clobber replaces an existing asset of the same name in one step,
@@ -195,7 +204,21 @@ jobs:
         # See the Windows job's equivalent step for why: electron-builder's
         # own --publish flow was silently failing to complete large-file
         # uploads while still exiting 0.
-        run: npx electron-builder --mac
+        shell: bash
+        run: |
+          set +e
+          output=$(npx electron-builder --mac 2>&1)
+          status=$?
+          set -e
+          flat=$(echo "$output" | tr '\n' '|')
+          if [ ${#flat} -gt 3500 ]; then
+            flat="...${flat: -3500}"
+          fi
+          echo "::notice::electron-builder --mac exit=$status tail=$flat"
+          if [ $status -ne 0 ]; then
+            echo "::error::electron-builder --mac failed (exit $status): $flat"
+            exit 1
+          fi
 
       - name: Upload macOS dmg to the v1.0.0 release
         # See the Windows job's equivalent step: v1.0.0-ci8 failed here too
