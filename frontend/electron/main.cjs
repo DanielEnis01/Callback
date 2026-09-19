@@ -59,6 +59,38 @@ if (process.platform === "win32") {
     nativeDir = path.dirname(
       require.resolve("@smartspectra/node-sdk-win32-x64/package.json")
     );
+
+    // THE actual bug, finally found: every single DLL in nativeDir --
+    // including trivial ones like VCRUNTIME140.dll with almost no
+    // dependencies of its own -- failed to koffi.load() individually and
+    // identically. That's not a missing-dependency problem, because a file
+    // with no real dependencies can't have a missing dependency. It means
+    // the PATH ITSELF isn't reachable by a real OS call.
+    //
+    // require.resolve() returns a path under "...\app.asar\node_modules\...".
+    // Node's OWN fs functions (existsSync, readdirSync, readFileSync --
+    // which is why the earlier diagnostics logged this directory as
+    // existing, with all the right files listed) are patched by Electron
+    // to transparently redirect asarUnpack'd files to the real, physical
+    // "app.asar.unpacked" directory electron-builder actually writes them
+    // to on disk. But koffi's native module calls the raw Win32
+    // LoadLibraryW API directly, which is NOT patched and knows nothing
+    // about asar -- app.asar is one opaque archive file as far as Windows
+    // is concerned, so "...\app.asar\node_modules\..." doesn't exist as a
+    // real directory at all, and EVERY load through it fails the same way,
+    // which is exactly what the probe showed. This has nothing to do with
+    // which DLLs are bundled -- every DLL-bundling round trip so far was
+    // fixing a real but ultimately irrelevant gap, because nothing in that
+    // directory was ever reachable by the native loader in the first place.
+    if (nativeDir.includes(`${path.sep}app.asar${path.sep}`)) {
+      const unpackedDir = nativeDir.replace(
+        `${path.sep}app.asar${path.sep}`,
+        `${path.sep}app.asar.unpacked${path.sep}`
+      );
+      debugLog(`nativeDir was inside app.asar (unreachable by native LoadLibrary calls) -- rewriting to the real on-disk unpacked path: ${unpackedDir}`);
+      nativeDir = unpackedDir;
+    }
+
     debugLog(`nativeDir resolved: ${nativeDir}`);
     debugLog(`nativeDir exists: ${fs.existsSync(nativeDir)}`);
     try {
@@ -81,6 +113,25 @@ if (process.platform === "win32") {
     } catch (e) {
       debugLog(`SetDllDirectoryW attempt failed: ${(e && e.stack) || e}`);
     }
+
+    // The SDK's own ffi.js independently computes the native library path
+    // itself (js/resolve-native.js, via its own require.resolve() call) --
+    // so even with nativeDir corrected above for OUR SetDllDirectoryW/PATH
+    // setup, the SDK's internal resolution would still recompute the same
+    // broken app.asar-relative path on its own and fail identically.
+    // resolve-native.js already has an override for exactly this situation
+    // (its own top comment calls it "the sole dev/override escape hatch"):
+    // SMARTSPECTRA_CAPI_PATH, a full path to the shared library that skips
+    // its require.resolve()-based lookup entirely. Setting it here, to the
+    // already-corrected on-disk path, means the SDK loads the real file
+    // instead of independently rediscovering the same broken one.
+    const capiPath = path.join(nativeDir, "smartspectra_capi.dll");
+    process.env.SMARTSPECTRA_CAPI_PATH = capiPath;
+    debugLog(
+      `SMARTSPECTRA_CAPI_PATH set to ${capiPath} (exists: ${fs.existsSync(capiPath)}) ` +
+      `to bypass the SDK's own require.resolve()-based lookup, which would ` +
+      `otherwise recompute the same unreachable app.asar path independently.`
+    );
   } catch (err) {
     debugLog(`FAILED to resolve/prepare nativeDir: ${(err && err.stack) || err}`);
   }
