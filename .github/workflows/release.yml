@@ -141,7 +141,7 @@ jobs:
         # is unreliable about electron-builder's own large-file publish path.
         shell: pwsh
         run: |
-          $output = (npx electron-builder --win 2>&1 | Out-String)
+          $output = (npx electron-builder --win --publish never 2>&1 | Out-String)
           $flat = ($output -replace "`r`n", ' | ' -replace "`n", ' | ').Trim()
           if ($flat.Length -gt 3500) { $flat = "..." + $flat.Substring($flat.Length - 3500) }
           Write-Host "::notice::electron-builder --win exit=$LASTEXITCODE tail=$flat"
@@ -207,7 +207,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          output=$(npx electron-builder --mac 2>&1)
+          output=$(npx electron-builder --mac --publish never 2>&1)
           status=$?
           set -e
           flat=$(echo "$output" | tr '\n' '|')
