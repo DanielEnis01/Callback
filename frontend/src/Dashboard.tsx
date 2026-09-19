@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { SessionMeeting } from "./SessionMeeting";
 import { CalibrationSession } from "./CalibrationSession";
+import { CameraDeviceSetting } from "./CameraDeviceSetting";
 import { SessionSetup } from "./SessionSetup";
 import { getBaseline, getInterviewProfile, remoteStorageEnabled, type Baseline } from "./baselineStore";
 import { useAuth } from "./AuthContext";
@@ -1223,6 +1224,11 @@ const SettingsView: FC<{ onLogout: () => void }> = ({ onLogout }) => {
             <p className="text-[13px] text-white/40 py-3">No resumes uploaded yet.</p>
           )}
         </div>
+      </SectionCard>
+
+      {/* Camera */}
+      <SectionCard title="Camera">
+        <CameraDeviceSetting />
       </SectionCard>
 
       {/* Target position */}

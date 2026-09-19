@@ -1,6 +1,7 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
+const http = require("node:http");
 
 // --- Diagnostics -------------------------------------------------------
 // Previously, if SmartSpectra's native module failed to load, the only
@@ -224,6 +225,68 @@ try {
   }
 }
 
+const STATIC_MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".map": "application/json; charset=utf-8",
+  ".wasm": "application/wasm",
+};
+
+// Google's OAuth endpoint rejects signInWithPopup (AuthContext.tsx's
+// signInGoogle) when it's launched from a file:// origin -- win.loadFile()
+// gives the renderer window.location.origin === "null"/"file://", which
+// can't match anything on Firebase's "authorized domains" allowlist, so
+// the popup flow fails no matter what app.userAgentFallback is set to
+// (that fix addresses a *different* block -- Google's embedded-webview UA
+// sniffing -- and was necessary but not sufficient on its own). Serving
+// the packaged build over plain HTTP from localhost instead sidesteps
+// this: Firebase authorizes "localhost" by default for every project
+// regardless of port, and http://localhost gives Chromium a real origin
+// the same way any ordinary web app has one.
+//
+// This is a tiny static file server, not a dev server -- it just serves
+// the already-built dist/ directory so the app has a real HTTP origin
+// instead of file://. Bound to 127.0.0.1 only, never reachable from the
+// LAN, on an OS-assigned ephemeral port.
+let staticServer = null;
+function startStaticServer(rootDir) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      try {
+        const requestPath = decodeURIComponent((req.url || "/").split("?")[0]);
+        let filePath = path.join(rootDir, requestPath === "/" ? "index.html" : requestPath);
+        // Guard against a request path escaping rootDir via "..".
+        if (!filePath.startsWith(rootDir)) filePath = path.join(rootDir, "index.html");
+        if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+          // SPA-style fallback so an unrecognized path serves index.html
+          // instead of 404ing (there's no client-side router today, but
+          // this keeps the server correct if one's ever added).
+          filePath = path.join(rootDir, "index.html");
+        }
+        const ext = path.extname(filePath).toLowerCase();
+        res.writeHead(200, { "Content-Type": STATIC_MIME_TYPES[ext] || "application/octet-stream" });
+        fs.createReadStream(filePath).pipe(res);
+      } catch (err) {
+        res.writeHead(500);
+        res.end(String((err && err.message) || err));
+      }
+    });
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
 const isDev = !app.isPackaged;
 const startUrl = process.env.ELECTRON_START_URL || "http://localhost:5173";
 
@@ -309,7 +372,19 @@ async function createWindow() {
       win.webContents.openDevTools({ mode: "detach" });
     }
   } else {
-    win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    const distDir = path.join(__dirname, "..", "dist");
+    try {
+      staticServer ??= await startStaticServer(distDir);
+      const port = staticServer.address().port;
+      win.loadURL(`http://localhost:${port}/index.html`);
+    } catch (err) {
+      debugLog(
+        `Static server failed to start (${(err && err.message) || err}) -- ` +
+        `falling back to file://. Google sign-in will not work under that ` +
+        `origin, but the rest of the app still will.`
+      );
+      win.loadFile(path.join(distDir, "index.html"));
+    }
   }
 }
 
@@ -340,6 +415,10 @@ app.whenReady().then(() => {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
+  app.on("will-quit", () => {
+    staticServer?.close();
   });
 });
 

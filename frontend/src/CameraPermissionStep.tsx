@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, ChevronDown, Loader2, RefreshCw, X } from "lucide-react";
+import { getPreferredCameraDeviceId, setPreferredCameraDeviceId } from "./cameraDevicePrefs";
 
 interface CameraPermissionStepProps {
   /** Called once a camera stream has been acquired and is ready to hand off. */
@@ -61,7 +62,7 @@ export function CameraPermissionStep({ onReady, onCancel }: CameraPermissionStep
   const [status, setStatus] = useState<Status>("checking-devices");
   const [message, setMessage] = useState<string | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => getPreferredCameraDeviceId() || "");
   const streamRef = useRef<MediaStream | null>(null);
   const cancelledRef = useRef(false);
 
@@ -127,7 +128,10 @@ export function CameraPermissionStep({ onReady, onCancel }: CameraPermissionStep
       const cams = list.filter((d) => d.kind === "videoinput");
       if (cams.length) setDevices(cams);
       const actualId = stream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId ?? "";
-      if (actualId) setSelectedDeviceId(actualId);
+      if (actualId) {
+        setSelectedDeviceId(actualId);
+        setPreferredCameraDeviceId(actualId);
+      }
 
       setStatus("ready");
       onReady(stream);
@@ -171,7 +175,7 @@ export function CameraPermissionStep({ onReady, onCancel }: CameraPermissionStep
 
         {status === "idle" && devices.length > 0 && (
           <button
-            onClick={() => void requestCamera(selectedDeviceId || undefined)}
+            onClick={() => void requestCamera(selectedDeviceId || getPreferredCameraDeviceId() || undefined)}
             className="flex items-center gap-2 bg-white text-black text-[13px] font-semibold px-5 h-11 rounded-none transition-opacity active:opacity-70"
           >
             Allow camera access

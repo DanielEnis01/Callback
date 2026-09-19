@@ -5,9 +5,7 @@ import { getApps, initializeApp, applicationDefault, cert } from 'firebase-admin
 import { getAuth } from 'firebase-admin/auth';
 
 // The Firebase Admin service account. It is what lets this backend verify
-// the ID tokens the frontend sends -- specifically the checkRevoked pass in
-// verifyIdToken below, which calls Google's Identity Toolkit and therefore
-// needs a real credential, not just a project id.
+// the ID tokens the frontend sends.
 //
 // It used to be supplied only through GOOGLE_APPLICATION_CREDENTIALS, which
 // Google's library resolves as an ABSOLUTE path. That pinned the whole
@@ -63,7 +61,20 @@ export async function verifyFirebaseToken(token) {
     console.log(`[auth] Firebase credential loaded from ${source === 'FIREBASE_SERVICE_ACCOUNT_JSON' || source === 'application default credentials' ? source : 'backend/' + source.split('/backend/').pop()}`);
     return initializeApp({ credential, projectId: process.env.FIREBASE_PROJECT_ID });
   })();
-  return getAuth(app).verifyIdToken(token, true);
+  // verifyIdToken's 2nd arg (checkRevoked) was true, which makes Admin SDK
+  // do an EXTRA network round trip to Google's Identity Toolkit on every
+  // single authenticated request, on top of Render <-> Tiger Data latency
+  // -- with the dashboard firing several requests per page load, that
+  // extra hop was a real, measurable chunk of "everything feels slow."
+  // Without it, verifyIdToken does local, fast cryptographic verification
+  // against Google's public certs (cached after the first fetch) -- no
+  // per-request network call at all. The tradeoff: a revoked/disabled
+  // account's existing token keeps working until it naturally expires
+  // (Firebase ID tokens expire after 1 hour) instead of being rejected
+  // immediately. That's an acceptable trade for a personal interview-prep
+  // app; revisit if this ever needs to lock out a compromised account
+  // faster than an hour.
+  return getAuth(app).verifyIdToken(token);
 }
 
 export function authenticate(verifyToken = verifyFirebaseToken) {
