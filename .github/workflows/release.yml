@@ -153,11 +153,19 @@ jobs:
         # here instead of a dead end.
         shell: pwsh
         run: |
-          Write-Host "::notice::release/ contents: $((Get-ChildItem release -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', ')"
+          $listing = (Get-ChildItem release -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', '
+          Write-Host "::notice::release/ contents: $listing"
           $output = gh release upload v1.0.0 "release/Callback-Setup-1.0.0.exe" "release/Callback-1.0.0-win.zip" --clobber --repo DanielEnis01/Callback 2>&1 | Out-String
-          Write-Host "::notice::gh release upload output: $output"
+          # Workflow commands (::notice::/::error::) must be a single line --
+          # gh's output can contain newlines, which would otherwise silently
+          # break the annotation (this is very likely why v1.0.0-ci9's error
+          # annotation carried no useful detail despite this same code being
+          # present). Collapsing them to " | " keeps it one line so it
+          # actually renders.
+          $flat = ($output -replace "`r`n", ' | ' -replace "`n", ' | ').Trim()
+          Write-Host "::notice::gh upload exit=$LASTEXITCODE output=$flat"
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::gh release upload failed (exit $LASTEXITCODE): $output"
+            Write-Host "::error::gh release upload failed (exit ${LASTEXITCODE}): $flat"
             exit 1
           }
         env:
@@ -198,9 +206,10 @@ jobs:
           echo "::notice::release/ contents: $(ls release/ 2>&1 | tr '\n' ' ')"
           output=$(gh release upload v1.0.0 release/*.dmg --clobber --repo DanielEnis01/Callback 2>&1)
           status=$?
-          echo "::notice::gh release upload output: $output"
+          flat=$(echo "$output" | tr '\n' '|')
+          echo "::notice::gh upload exit=$status output=$flat"
           if [ $status -ne 0 ]; then
-            echo "::error::gh release upload failed (exit $status): $output"
+            echo "::error::gh release upload failed (exit $status): $flat"
             exit 1
           fi
         env:
