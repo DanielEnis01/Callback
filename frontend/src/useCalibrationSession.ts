@@ -152,8 +152,17 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
 
     sdk.on("processingStatus", (code) => {
       if (cancelled) return;
-      if (code === 3) setStatus("running");
-      else if (code === 5) setStatus("error");
+      if (code === 3) {
+        setStatus("running");
+      } else if (code === 5) {
+        // Same permanent wedge usePresageSession.ts guards against: once the
+        // native engine hits kError it never recovers on its own and keeps
+        // dropping every subsequent frame with "not in a valid state",
+        // spamming stderr. Stop immediately instead of leaving it running.
+        console.warn("[Calibration] Native engine entered error state — stopping SDK to prevent log spam.");
+        sdk.stop().catch(() => {});
+        setStatus("error");
+      }
     });
 
     sdk.on("metrics", (buf) => {
@@ -211,8 +220,28 @@ export function useCalibrationSession(active: boolean, recording: boolean, video
       }
     });
 
+    let consecutiveStateErrors = 0;
+
     sdk.on("error", (code, message) => {
       if (cancelled) return;
+
+      // The native engine enters a permanent "not in a valid state" loop
+      // when the on-device physiology model fails to load. Every frame it
+      // tries to process triggers this error — hundreds per second, making
+      // the console unusable. Once we've seen it 3 times in a row, stop the
+      // SDK entirely; there's no way to recover without restarting the
+      // process anyway. (Mirrors the same guard in usePresageSession.ts.)
+      if (message?.includes("not in a valid state")) {
+        consecutiveStateErrors++;
+        if (consecutiveStateErrors >= 3) {
+          console.warn("[Calibration] SDK wedged ('not in a valid state' \u00d73) \u2014 stopping to prevent log spam.");
+          sdk.stop().catch(() => {});
+          return;
+        }
+      } else {
+        consecutiveStateErrors = 0;
+      }
+
       console.error("SmartSpectra calibration error:", code, message);
       setStatus("error");
       setError(message);

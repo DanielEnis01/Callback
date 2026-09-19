@@ -14,7 +14,11 @@ import { tigerDb } from './services/tigerdata.js';
 export function createApp({ db = tigerDb, verifyToken } = {}) {
   const app = express();
   app.disable('x-powered-by');
-  const origins = (process.env.FRONTEND_ORIGIN || 'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8444,http://localhost:8444').split(',').map(s => s.trim());
+  // The packaged Electron app loads the built UI over file://, which Chromium
+  // reports as the literal Origin header "null" (not the string "file://") --
+  // include it by default so a built app talking to a local backend works
+  // out of the box; when hosting, add "null" to FRONTEND_ORIGIN too.
+  const origins = (process.env.FRONTEND_ORIGIN || 'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8444,http://localhost:8444,null').split(',').map(s => s.trim());
   app.use(cors({ origin: origins, exposedHeaders: ['X-Content-SHA256', 'Content-Disposition'] }));
   app.get('/health', asyncRoute(async (_req, res) => {
     try { await db.query('SELECT 1'); res.json({ status: 'ok', database: 'connected' }); }

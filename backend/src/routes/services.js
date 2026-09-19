@@ -142,7 +142,7 @@ router.post('/gemini/interview-plan', async (req, res) => {
     // Same rule as the analysis route: the user is waiting to start their
     // interview, so memory gets a fixed budget and is dropped if it overruns.
     const budget = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('memory lookup exceeded its 4s budget')), 4000).unref?.());
+      setTimeout(() => reject(new Error('memory lookup exceeded its 7s budget')), 7000).unref?.());
     const [weak, all, notes] = await Promise.race([
       Promise.all([
         retrieveMemory(db, { userId: req.user.userId, query: jobPosting, kind: 'qa_pair', limit: 6, weakOnly: true }),
@@ -296,7 +296,7 @@ router.post('/analysis/transcript', async (req, res) => {
       // front of the user waiting on their results, and Backboard is a
       // third-party network hop behind a 250ms throttle -- without a
       // deadline, one slow provider turns into a spinner that never ends.
-      const deadline = Date.now() + 3500;
+      const deadline = Date.now() + 7000;
       const planRow = await db.query('SELECT interview_plan FROM sessions WHERE session_id = $1 AND user_id = $2', [sessionId, req.user.userId]);
       plan = planRow.rows[0]?.interview_plan ?? [];
       const answered = groupAnswers(transcript, plan);

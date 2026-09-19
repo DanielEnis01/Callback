@@ -251,9 +251,15 @@ const QUESTION_PLAN_SHAPE =
 export async function generateInterviewPlan({ jobPosting, resumePdf, memory, traitFocus, targetWeakness } = {}) {
   const ai = getClient();
 
+  const standardQuestionCount = 3;
+
   const systemInstruction =
     'You are an experienced recruiter preparing a focused 30-minute screening interview. ' +
-    'Design EXACTLY four questions for this specific candidate and role.\n' +
+    (traitFocus
+      ? 'Design EXACTLY four questions for this specific candidate and role.\n'
+      : `Design EXACTLY ${standardQuestionCount} questions for this specific candidate and role. A fourth, ` +
+        'fixed opening question ("Tell me about yourself.") is added separately in code, every session -- ' +
+        'it is not yours to write, and none of your questions should duplicate it.\n') +
     (traitFocus
       // Practice mode: the mix is yours to choose. A skill like Answer
       // Structure is best drilled with four behavioral questions; Action
@@ -268,8 +274,14 @@ export async function generateInterviewPlan({ jobPosting, resumePdf, memory, tra
         '"job_posting"), and order them yourself, easiest to hardest, so the candidate warms into it.\n' +
         'Resume questions must still name the actual project/company/technology so they are obviously ' +
         'personalised.\n\n'
-      : '  - 1 behavioral question (past behaviour predicting future performance, STAR-answerable)\n' +
-        '  - 2 questions about SPECIFIC projects, roles or achievements named on the attached resume ' +
+      : '  - 1 behavioral question (past behaviour predicting future performance, STAR-answerable). ' +
+        'This is IN ADDITION to the fixed "Tell me about yourself" opener asked separately -- do NOT write ' +
+        'another introduce-yourself or walk-me-through-your-background question here. Pick a genuinely ' +
+        'different behavioral theme instead, such as: a conflict or disagreement, a mistake or failure, a ' +
+        'tight deadline, an ambiguous problem, or a time they had to lead or persuade someone. Vary which ' +
+        'theme you reach for call to call -- do not default to the same one every time, and if PRIOR ' +
+        'SESSIONS below shows a theme already used, pick a different one now.\n' +
+        '  - 1 question about a SPECIFIC project, role or achievement named on the attached resume ' +
         '(name the actual project/company/technology in the question so it is obviously personalised)\n' +
         '  - 1 question about a specific requirement, responsibility or technology named in the job posting\n\n') +
     (resumePdf
@@ -376,8 +388,11 @@ export async function generateInterviewPlan({ jobPosting, resumePdf, memory, tra
       // previously fumbled, so the UI can say so.
       repeatOf: typeof q.repeatOf === 'string' && q.repeatOf.trim() ? q.repeatOf.trim() : null,
     }))
-    .slice(0, 4);
-  if (questions.length < 4) throw new Error(`Gemini returned ${questions.length} usable questions, expected 4.`);
+    .slice(0, traitFocus ? 4 : standardQuestionCount);
+  const expectedFromModel = traitFocus ? 4 : standardQuestionCount;
+  if (questions.length < expectedFromModel) {
+    throw new Error(`Gemini returned ${questions.length} usable questions, expected ${expectedFromModel}.`);
+  }
   const role = typeof parsed?.role === 'string' && parsed.role.trim() ? parsed.role.trim().slice(0, 120) : null;
 
   // Generic sessions run a fixed order: open behavioral to settle them in,
@@ -391,8 +406,12 @@ export async function generateInterviewPlan({ jobPosting, resumePdf, memory, tra
   // undo that -- with a free mix, type is no longer what orders a session
   // sensibly (four behavioral questions have no type order at all).
   if (!traitFocus) {
-    const ORDER = { behavioral: 0, resume: 1, job_posting: 2 };
+    // Fixed opener, guaranteed verbatim every session rather than left to
+    // whatever the model happens to pick that day.
+    const OPENING_QUESTION = { type: 'behavioral', text: 'Tell me about yourself.', focus: 'introduction', repeatOf: null };
+    const ORDER = { behavioral: 0, job_posting: 1, resume: 2 };
     questions.sort((a, b) => ORDER[a.type] - ORDER[b.type]);
+    questions.unshift(OPENING_QUESTION);
   }
   return { role, questions };
 }
