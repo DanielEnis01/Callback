@@ -127,32 +127,30 @@ jobs:
       - name: Build web bundle
         run: npm run build
 
-      - name: Remove stale Windows installer assets before republishing
-        # electron-builder's GitHub publish does NOT reliably replace an
-        # asset of the same name on an existing (non-draft) release -- this
-        # is the actual reason builds v1.0.0-ci5 and v1.0.0-ci6 both reported
-        # "success" yet the downloaded installer never actually changed
-        # (confirmed: the release-asset blob ID behind the download link was
-        # byte-identical across ci4, ci5, and ci6 -- every fix since ci4 was
-        # silently never published). Deleting the old asset first guarantees
-        # this run's upload actually lands instead of no-op'ing on a name
-        # conflict. continue-on-error covers the first-ever run, where the
-        # asset doesn't exist yet to delete.
+      - name: Build Windows installer (local only, no auto-publish)
+        # electron-builder's own --publish flow turned out to be the deeper
+        # problem, not just the same-name-asset issue the previous commit
+        # addressed: ci7 (which added the delete-old-asset step) reported
+        # "success" and even deleted the previous installer, but the new
+        # ~220MB .exe never actually finished uploading -- confirmed by
+        # checking the release directly afterward: only the small metadata
+        # files electron-builder also generates (latest.yml, .blockmap) made
+        # it up, the installer itself 404'd. Building locally here and
+        # uploading explicitly below with `gh release upload`, the same tool
+        # GitHub itself recommends for CI asset uploads, sidesteps whatever
+        # is unreliable about electron-builder's own large-file publish path.
+        run: npx electron-builder --win
+
+      - name: Upload Windows installer to the v1.0.0 release
+        # --clobber replaces an existing asset of the same name in one step,
+        # so this also removes the need for the separate delete-first step a
+        # previous commit added.
         shell: pwsh
         run: |
-          $names = gh release view v1.0.0 --repo DanielEnis01/Callback --json assets --jq ".assets[].name" 2>$null
-          foreach ($n in $names) {
-            if ($n -match '\.(exe|zip)$') {
-              Write-Host "::notice::Deleting stale asset: $n"
-              gh release delete-asset v1.0.0 $n --repo DanielEnis01/Callback -y
-            }
-          }
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: Build and publish Windows installer
-        run: npx electron-builder --win --publish always
+          gh release upload v1.0.0 `
+            "release/Callback-Setup-1.0.0.exe" `
+            "release/Callback-1.0.0-win.zip" `
+            --clobber --repo DanielEnis01/Callback
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -176,29 +174,15 @@ jobs:
       - name: Build web bundle
         run: npm run build
 
-      - name: Remove stale macOS installer assets before republishing
-        # Same non-replacement issue as the Windows job's equivalent step --
-        # see its comment for the full story.
+      - name: Build macOS dmg (local only, no auto-publish)
+        # See the Windows job's equivalent step for why: electron-builder's
+        # own --publish flow was silently failing to complete large-file
+        # uploads while still exiting 0.
+        run: npx electron-builder --mac
+
+      - name: Upload macOS dmg to the v1.0.0 release
         shell: bash
         run: |
-          names=$(gh release view v1.0.0 --repo DanielEnis01/Callback --json assets --jq '.assets[].name' 2>/dev/null || true)
-          for n in $names; do
-            case "$n" in
-              *.dmg)
-                # .dmg only, deliberately NOT .zip -- the Windows job also
-                # produces a .zip target and runs in parallel with this one;
-                # matching .zip here too would race it and could delete the
-                # Windows zip mid-upload.
-                echo "::notice::Deleting stale asset: $n"
-                gh release delete-asset v1.0.0 "$n" --repo DanielEnis01/Callback -y || true
-                ;;
-            esac
-          done
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      - name: Build and publish macOS dmg
-        run: npx electron-builder --mac --publish always
+          gh release upload v1.0.0 release/*.dmg --clobber --repo DanielEnis01/Callback
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
