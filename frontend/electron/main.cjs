@@ -138,6 +138,63 @@ if (process.platform === "win32") {
   }
 }
 
+// macOS has the exact same underlying problem as Windows above, just
+// surfaced through a different native API: dlopen() (called via koffi,
+// same as Windows' LoadLibraryW) is not asar-aware, so a path computed as
+// ".../app.asar/node_modules/@smartspectra/node-sdk-darwin-arm64/..." is
+// unreachable -- app.asar is one opaque file to the OS, not a real
+// directory. This is what produces the errno=20 (ENOTDIR) dlopen failure:
+// "tried: '.../app.asar/.../libsmartspectra_capi.dylib' (errno=20)".
+//
+// Unlike Windows, there's no SetDllDirectoryW/PATH-search-order step
+// needed here: electron-builder's asarUnpack ships the platform package's
+// files with their install_names/RPATHs already rewritten (per the SDK's
+// own resolve-native.js comment: "with install_names / RPATHs
+// pre-rewritten so it loads with zero env vars"), so once
+// SMARTSPECTRA_CAPI_PATH points dlopen at the real on-disk
+// app.asar.unpacked path, the library's own embedded @rpath/@loader_path
+// entries resolve its sibling dependencies (libsmartspectra, OpenCV, ...)
+// in the same directory without any extra search-path configuration.
+if (process.platform === "darwin") {
+  try {
+    nativeDir = path.dirname(
+      require.resolve("@smartspectra/node-sdk-darwin-arm64/package.json")
+    );
+
+    if (nativeDir.includes(`${path.sep}app.asar${path.sep}`)) {
+      const unpackedDir = nativeDir.replace(
+        `${path.sep}app.asar${path.sep}`,
+        `${path.sep}app.asar.unpacked${path.sep}`
+      );
+      debugLog(`nativeDir was inside app.asar (unreachable by native dlopen calls) -- rewriting to the real on-disk unpacked path: ${unpackedDir}`);
+      nativeDir = unpackedDir;
+    }
+
+    debugLog(`nativeDir resolved: ${nativeDir}`);
+    debugLog(`nativeDir exists: ${fs.existsSync(nativeDir)}`);
+    try {
+      debugLog(`nativeDir contents: ${fs.readdirSync(nativeDir).join(", ")}`);
+    } catch (e) {
+      debugLog(`could not list nativeDir: ${e && e.message}`);
+    }
+
+    // Same SMARTSPECTRA_CAPI_PATH override the SDK's own resolve-native.js
+    // exposes as its "sole dev/override escape hatch" -- skips its internal
+    // require.resolve()-based lookup (which would independently recompute
+    // the same broken app.asar path) and points dlopen straight at the
+    // corrected on-disk file.
+    const capiPath = path.join(nativeDir, "libsmartspectra_capi.dylib");
+    process.env.SMARTSPECTRA_CAPI_PATH = capiPath;
+    debugLog(
+      `SMARTSPECTRA_CAPI_PATH set to ${capiPath} (exists: ${fs.existsSync(capiPath)}) ` +
+      `to bypass the SDK's own require.resolve()-based lookup, which would ` +
+      `otherwise recompute the same unreachable app.asar path independently.`
+    );
+  } catch (err) {
+    debugLog(`FAILED to resolve/prepare nativeDir: ${(err && err.stack) || err}`);
+  }
+}
+
 const { app, BrowserWindow, session, systemPreferences, dialog } = require("electron");
 
 // Google actively blocks Google sign-in (the signInWithPopup flow in
