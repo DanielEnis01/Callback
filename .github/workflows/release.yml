@@ -49,13 +49,23 @@ jobs:
         # files -- smartspectra.dll itself imports MSVCP140_ATOMIC_WAIT.dll (a
         # separate file shipped alongside msvcp140.dll in the modern VC++
         # redistributable, added for C++20 atomic wait/notify support), which
-        # earlier builds never copied. That's what caused "Failed to load
-        # shared library" to persist even after the PATH/SetDllDirectory fixes,
-        # since those only fixed *finding* the folder, not what's missing from
-        # it. The extra entries below are the rest of the modern VC++ redist's
-        # companion DLL set, bundled defensively so a 6th missing-file report
-        # doesn't send us on another round trip -- each is Test-Path-guarded so
-        # a runner without one just warns instead of failing the build.
+        # earlier builds never copied.
+        #
+        # Two prior attempts at this step didn't work: System32-only (v1.0.0-ci4)
+        # didn't have the file, and a two-stage "find x64 dirs under Program
+        # Files\Microsoft Visual Studio, then filter to \Redist\MSVC\"
+        # search (v1.0.0-ci5) *also* came up empty even though it ran without
+        # error -- confirmed by extracting both shipped installers directly and
+        # finding the file still absent both times. Rather than guess a third
+        # directory-search shape blind, this uses vswhere.exe -- the tool
+        # Microsoft ships specifically so scripts don't have to guess VS
+        # install layout -- to ask Visual Studio directly where its redist
+        # payload lives, which is also the exact mechanism MSBuild itself uses
+        # to populate $(VCToolsRedistDir). Every step below writes a
+        # ::notice::/::warning:: workflow annotation (visible on the Actions
+        # run summary without needing to open the raw job log) so if this
+        # *still* doesn't find it, the next round trip has real data instead
+        # of another blind guess.
         shell: pwsh
         run: |
           $dest = "node_modules/@smartspectra/node-sdk-win32-x64"
@@ -65,38 +75,52 @@ jobs:
             "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "VCRUNTIME140_THREADS.dll",
             "CONCRT140.dll", "VCCORLIB140.dll"
           )
-          # System32 only has what's registered system-wide on this runner
-          # image -- confirmed by shipping build v1.0.0-ci4 and finding
-          # MSVCP140_ATOMIC_WAIT.dll missing from the actual installer, because
-          # this runner's System32 doesn't have it even though the file we
-          # need genuinely exists on the machine. Visual Studio's own VC++
-          # Redist payload -- present on every windows-latest runner because
-          # it's what Build Tools ships so *other* projects can bundle the
-          # CRT -- carries the complete, current set regardless of what's
-          # installed into System32, so search it too, as a second and much
-          # more complete source.
-          $searchRoots = @("C:\Windows\System32")
-          $vsRedistRoots = Get-ChildItem "C:\Program Files*\Microsoft Visual Studio" -Directory -ErrorAction SilentlyContinue |
-            Get-ChildItem -Recurse -Directory -Filter "x64" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "\\Redist\\MSVC\\" } |
-            Select-Object -ExpandProperty FullName
-          $searchRoots += $vsRedistRoots
 
-          Write-Host "Search roots:"
-          $searchRoots | ForEach-Object { Write-Host "  $_" }
+          $searchRoots = @("C:\Windows\System32")
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $vsInstalls = & $vswhere -products * -property installationPath
+            Write-Host "::notice::vswhere found VS installs: $($vsInstalls -join '; ')"
+            foreach ($vsPath in $vsInstalls) {
+              # This is the exact file MSBuild itself reads to populate
+              # $(VCToolsRedistDir) -- not a guess about folder naming.
+              $verFile = Join-Path $vsPath "VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt"
+              if (Test-Path $verFile) {
+                $ver = (Get-Content $verFile | Select-Object -First 1).Trim()
+                $redistDir = Join-Path $vsPath "VC\Redist\MSVC\$ver\x64"
+                Write-Host "::notice::Redist version file says $ver -- redist dir: $redistDir (exists: $(Test-Path $redistDir))"
+                if (Test-Path $redistDir) { $searchRoots += $redistDir }
+              } else {
+                Write-Host "::warning::No VCRedistVersion file at $verFile"
+              }
+            }
+          } else {
+            Write-Host "::warning::vswhere.exe not found at $vswhere"
+          }
+
+          # Last-resort fallback: brute-force recursive search for each exact
+          # filename under both possible Program Files roots. Slower, but
+          # covers this even if vswhere/the version-file approach above finds
+          # nothing (e.g. a runner-image layout change).
+          foreach ($pf in @("C:\Program Files\Microsoft Visual Studio", "C:\Program Files (x86)\Microsoft Visual Studio")) {
+            if (Test-Path $pf) { $searchRoots += $pf }
+          }
+
+          Write-Host "::notice::Final search roots: $($searchRoots -join ' | ')"
 
           foreach ($f in $files) {
             $found = $null
             foreach ($root in $searchRoots) {
               if (-not (Test-Path $root)) { continue }
-              $candidate = Get-ChildItem -Path $root -Filter $f -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+              $candidate = Get-ChildItem -Path $root -Filter $f -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 1
               if ($candidate) { $found = $candidate.FullName; break }
             }
             if ($found) {
               Copy-Item $found (Join-Path $dest $f) -Force
-              Write-Host "Bundled $f from $found"
+              Write-Host "::notice::Bundled $f from $found"
             } else {
-              Write-Warning "$f not found anywhere on this runner (System32 or VS redist payloads) -- skipping"
+              Write-Host "::warning::$f not found anywhere searched on this runner -- skipping"
             }
           }
 
