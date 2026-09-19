@@ -139,7 +139,23 @@ jobs:
           }
 
       - name: Build web bundle
+        # Vite bakes import.meta.env.VITE_* values into the bundle at BUILD
+        # time, not read at runtime -- so these have to be set right here,
+        # not just present in a local .env file. Without them the packaged
+        # app silently ships with Firebase auth disabled ("Authentication
+        # is not available yet") and every backend call pointed at
+        # VITE_API_BASE_URL's fallback (a local dev server on 127.0.0.1)
+        # instead of the real Render-hosted backend -- which is exactly
+        # what shipped in every build through v1.0.0-ci15.
         run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_SMARTSPECTRA_API_KEY: ${{ secrets.VITE_SMARTSPECTRA_API_KEY }}
+          VITE_ENABLE_REMOTE_STORAGE: ${{ secrets.VITE_ENABLE_REMOTE_STORAGE }}
 
       - name: Build Windows installer (local only, no auto-publish)
         # electron-builder's own --publish flow turned out to be the deeper
@@ -212,7 +228,23 @@ jobs:
         run: npm ci
 
       - name: Build web bundle
+        # Vite bakes import.meta.env.VITE_* values into the bundle at BUILD
+        # time, not read at runtime -- so these have to be set right here,
+        # not just present in a local .env file. Without them the packaged
+        # app silently ships with Firebase auth disabled ("Authentication
+        # is not available yet") and every backend call pointed at
+        # VITE_API_BASE_URL's fallback (a local dev server on 127.0.0.1)
+        # instead of the real Render-hosted backend -- which is exactly
+        # what shipped in every build through v1.0.0-ci15.
         run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_SMARTSPECTRA_API_KEY: ${{ secrets.VITE_SMARTSPECTRA_API_KEY }}
+          VITE_ENABLE_REMOTE_STORAGE: ${{ secrets.VITE_ENABLE_REMOTE_STORAGE }}
 
       - name: Build macOS dmg (local only, no auto-publish)
         # See the Windows job's equivalent step for why: electron-builder's
